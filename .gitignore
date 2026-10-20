@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+data/job_tracker.json
+data/job_tracker.json.tmp
