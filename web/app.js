@@ -257,7 +257,11 @@ async function checkLocalModel() {
     if (health.models.length) {
       $('#model-select').innerHTML = health.models.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
       if (health.models.includes(currentModel)) $('#model-select').value = currentModel;
-      else currentModel = health.models[0];
+      else {
+        currentModel = health.models[0];
+        $('#model-select').value = currentModel;
+        localStorage.setItem('job-agent-model', currentModel);
+      }
     }
   } catch { $('#model-status').textContent = 'offline'; $('#mcp-status').textContent = 'offline'; }
 }

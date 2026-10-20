@@ -39,8 +39,17 @@ class Handler(BaseHTTPRequestHandler):
             mcp_installed = importlib.util.find_spec("mcp") is not None
             try:
                 with urlopen("http://127.0.0.1:11434/api/tags", timeout=1) as response:
-                    models = json.loads(response.read()).get("models", [])
-                return self._json({"ollama": True, "models": [m["name"] for m in models], "mcp": mcp_installed})
+                    installed = json.loads(response.read()).get("models", [])
+                # Ollama also lists embedding-only models (for example
+                # nomic-embed-text). They cannot answer chat requests or call tools.
+                models = [
+                    model["name"]
+                    for model in installed
+                    if not model.get("capabilities")
+                    or "completion" in model["capabilities"]
+                    or "tools" in model["capabilities"]
+                ]
+                return self._json({"ollama": True, "models": models, "mcp": mcp_installed})
             except (URLError, TimeoutError, ValueError):
                 return self._json({"ollama": False, "models": [], "mcp": mcp_installed})
         relative = "index.html" if request_path == "/" else request_path.lstrip("/")

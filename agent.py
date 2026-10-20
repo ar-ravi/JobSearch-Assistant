@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from mcp import Client, StdioServerParameters
@@ -23,6 +24,10 @@ class AgentUnavailable(Exception):
     """A local model or MCP service could not be reached."""
 
 
+class ToolCallingUnsupported(Exception):
+    """The selected Ollama model can chat but does not accept tool schemas."""
+
+
 def _ollama_chat(model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
     request = Request(
         OLLAMA_URL,
@@ -30,8 +35,14 @@ def _ollama_chat(model: str, messages: list[dict[str, Any]], tools: list[dict[st
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=120) as response:
-        return json.loads(response.read())
+    try:
+        with urlopen(request, timeout=120) as response:
+            return json.loads(response.read())
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if tools and "does not support tools" in body.lower():
+            raise ToolCallingUnsupported(body) from exc
+        raise
 
 
 def _text_content(result: Any) -> str:
@@ -55,6 +66,32 @@ def _tool_spec(tool: Any) -> dict[str, Any]:
             "description": tool.description or tool.name,
             "parameters": tool.input_schema,
         },
+    }
+
+
+async def _answer_with_mcp_context(client: Client, model: str, messages: list[dict[str, Any]], available: dict[str, Any]) -> dict[str, Any]:
+    """Support local chat models that do not implement native tool calling."""
+    context: dict[str, str] = {}
+    tools_used: list[dict[str, str]] = []
+    for name in ("list_tracked_companies", "list_applications", "find_jobs_needing_follow_up"):
+        tool = available.get(name)
+        if tool is None:
+            continue
+        result = await client.call_tool(name, {})
+        context[name] = _tool_result_for_model(result)
+        tools_used.append({"name": name, "label": tool.title or name})
+
+    messages[0]["content"] += (
+        "\nThe selected model does not support native tool calls. The app has already retrieved the following "
+        "read-only data through the MCP tools. Use only this data for tracker facts, and label recommendations as suggestions.\n"
+        f"MCP tracker context: {json.dumps(context, ensure_ascii=False)}"
+    )
+    response = _ollama_chat(model, messages, [])
+    assistant_message = response.get("message", {})
+    return {
+        "reply": assistant_message.get("content", "").strip() or "I couldn't form a response. Try asking in a different way.",
+        "model": model,
+        "tools_used": tools_used,
     }
 
 
@@ -85,7 +122,10 @@ async def _run_agent(message: str, model: str) -> dict[str, Any]:
             tools_used: list[dict[str, str]] = []
 
             for _ in range(MAX_TOOL_ROUNDS):
-                response = _ollama_chat(model, messages, ollama_tools)
+                try:
+                    response = _ollama_chat(model, messages, ollama_tools)
+                except ToolCallingUnsupported:
+                    return await _answer_with_mcp_context(client, model, messages, available)
                 assistant_message = response.get("message", {})
                 messages.append(assistant_message)
                 calls = assistant_message.get("tool_calls") or []
