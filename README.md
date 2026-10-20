@@ -15,7 +15,7 @@ The tracker works without Ollama. AI chat is optional and sends prompts only to 
 
 ## What it tracks
 
-- Companies you want to follow and roles you are interested in
+- Companies you want to follow, their career portal links, and roles you are interested in
 - Applications, URLs, statuses, applied dates, and latest activity
 - Follow-up dates, next actions, and private notes
 - Stale applications with no recorded activity for 14 days (configurable in Settings)
@@ -28,4 +28,4 @@ Run `python mcp_server.py` to expose tracker reads as MCP tools over stdio. The 
 
 The Excel workbook is created automatically on first run. If `data/job_tracker.json` exists from an older version, the app imports its records into the workbook the first time it starts; the JSON file is left in place as a backup. You can edit `data/job_tracker.xlsx` while the app is stopped, or back it up by copying that file. Do not commit it: local tracker files are ignored by Git.
 
-The workbook has `Applications`, `Companies`, and `Settings` sheets. Keep the header rows intact. Close the workbook in Excel before changing tracker data in the app so there is no conflict between unsaved spreadsheet edits and app updates.
+The workbook has `Applications`, `Companies`, `Settings`, and `Activity` sheets. The `Companies` sheet's `website` column stores each company's careers portal URL, which appears as a **Careers** link in the watchlist. Each role's timeline is stored in `Activity`; the app creates dated entries for new roles and status changes, and lets you log recruiter contacts, interviews, follow-ups, and notes. Older workbooks without this sheet are upgraded the next time the app saves data. Keep the header rows intact. Close the workbook in Excel before changing tracker data in the app so there is no conflict between unsaved spreadsheet edits and app updates.

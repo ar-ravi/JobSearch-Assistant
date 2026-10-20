@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from agent import AgentUnavailable, ask_agent
-from storage import add_application, add_company, dashboard, set_stale_after_days, update_application
+from storage import add_application, add_company, dashboard, log_application_activity, set_stale_after_days, update_application
 
 ROOT = Path(__file__).parent
 WEB = ROOT / "web"
@@ -67,16 +67,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             payload = self._body()
-            if self.path == "/api/companies":
+            request_path = urlsplit(self.path).path
+            if request_path == "/api/companies":
                 return self._json(add_company(payload.get("name", ""), payload.get("roles_to_watch", []), payload.get("website", "")), 201)
-            if self.path == "/api/applications":
+            if request_path == "/api/applications":
                 return self._json(add_application(payload), 201)
-            if self.path.startswith("/api/applications/"):
-                application_id = self.path.rsplit("/", 1)[-1]
+            if request_path.startswith("/api/applications/"):
+                parts = request_path.rstrip("/").split("/")
+                if len(parts) == 5 and parts[-1] == "activity":
+                    return self._json(log_application_activity(parts[-2], payload.get("type", ""), payload.get("note", "")), 201)
+                application_id = parts[-1]
                 return self._json(update_application(application_id, payload))
-            if self.path == "/api/settings":
+            if request_path == "/api/settings":
                 return self._json(set_stale_after_days(int(payload.get("stale_after_days", 14))))
-            if self.path == "/api/chat":
+            if request_path == "/api/chat":
                 return self._chat(payload)
             return self._json({"error": "Not found"}, 404)
         except (ValueError, KeyError, json.JSONDecodeError) as exc:

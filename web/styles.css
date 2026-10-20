@@ -61,3 +61,23 @@
 .chat-bubble{font-size:10px}
 .chat-composer input{font-size:10px}
 .page-footer{font-size:9px}
+.modal{max-height:calc(100vh - 24px);overflow-y:auto}
+.timeline-section{margin-top:17px;padding-top:14px;border-top:1px solid #edf0ec}
+.timeline-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.timeline-heading h3{font:700 13px var(--display);letter-spacing:-.2px;margin:0}
+.timeline-heading>span{font-size:9px;color:#9aa19a}
+.activity-timeline{max-height:180px;overflow-y:auto;padding:3px 4px 0 0}
+.timeline-entry{position:relative;margin-left:6px;padding:0 0 14px 17px;border-left:1px solid #dfe9e0}
+.timeline-entry:last-child{padding-bottom:4px;border-left-color:transparent}
+.timeline-dot{position:absolute;left:-4px;top:3px;width:7px;height:7px;border-radius:50%;background:#79a783;border:1px solid #fff;box-shadow:0 0 0 1px #b9d4be}
+.timeline-entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.timeline-entry-head strong{font-size:10px;font-weight:700;color:#455348}
+.timeline-entry-head time{font-size:8px;color:#9ba29b;white-space:nowrap}
+.timeline-status{display:inline-block;margin-top:4px;padding:2px 6px;border-radius:10px;background:#eff6f0;color:#64826a;font-size:8px}
+.timeline-entry p{margin:5px 0 0;color:#68736a;font-size:10px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.timeline-empty{margin:0;padding:9px 10px;border-radius:6px;background:#f7f9f6;color:#969f97;font-size:9px;line-height:1.5}
+.timeline-composer{display:grid;justify-items:start;gap:9px;margin-top:12px;padding:11px;background:#f8faf7;border:1px solid #edf0ec;border-radius:8px}
+.timeline-composer-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;width:100%}
+.timeline-composer .field{font-size:9px}
+.timeline-composer .field select,.timeline-composer .field textarea{font-size:10px}
+.timeline-composer textarea{min-height:54px}

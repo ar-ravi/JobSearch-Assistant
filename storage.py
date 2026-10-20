@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
     "settings": {"stale_after_days": 14},
     "companies": [],
     "applications": [],
+    "activities": [],
 }
 STATUSES = {"watching", "saved", "applied", "screening", "interview", "offer", "rejected", "withdrawn"}
 COMPANY_COLUMNS = ("id", "name", "roles_to_watch", "website", "added_date")
@@ -29,6 +30,8 @@ APPLICATION_COLUMNS = (
     "id", "company_id", "company", "role", "url", "location", "source", "status",
     "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "created_at", "updated_at",
 )
+ACTIVITY_COLUMNS = ("id", "application_id", "occurred_at", "type", "status", "note")
+ACTIVITY_TYPES = {"role_added", "status_change", "note", "recruiter_contact", "interview", "follow_up"}
 _LOCK = threading.RLock()
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -78,6 +81,7 @@ def _read_workbook() -> dict[str, Any]:
             raise ValueError(f"Tracker workbook is missing sheets: {', '.join(sorted(missing))}")
         companies = _read_sheet(workbook["Companies"], COMPANY_COLUMNS)
         applications = _read_sheet(workbook["Applications"], APPLICATION_COLUMNS)
+        activities = _read_sheet(workbook["Activity"], ACTIVITY_COLUMNS) if "Activity" in workbook.sheetnames else []
         settings_sheet = workbook["Settings"]
         settings: dict[str, Any] = {}
         for key, value in settings_sheet.iter_rows(min_row=2, max_col=2, values_only=True):
@@ -96,8 +100,11 @@ def _read_workbook() -> dict[str, Any]:
     for application in applications:
         for key in APPLICATION_COLUMNS:
             application[key] = _text(application.get(key))
+    for activity in activities:
+        for key in ACTIVITY_COLUMNS:
+            activity[key] = _text(activity.get(key))
     settings.setdefault("stale_after_days", DEFAULTS["settings"]["stale_after_days"])
-    return {"settings": settings, "companies": companies, "applications": applications}
+    return {"settings": settings, "companies": companies, "applications": applications, "activities": activities}
 
 
 def _style_sheet(sheet: Any, columns: tuple[str, ...]) -> None:
@@ -133,6 +140,7 @@ def _write_workbook(data: dict[str, Any]) -> None:
     applications_sheet = workbook.active
     applications_sheet.title = "Applications"
     companies_sheet = workbook.create_sheet("Companies")
+    activities_sheet = workbook.create_sheet("Activity")
     settings_sheet = workbook.create_sheet("Settings")
 
     for sheet, columns in ((applications_sheet, APPLICATION_COLUMNS), (companies_sheet, COMPANY_COLUMNS)):
@@ -153,6 +161,20 @@ def _write_workbook(data: dict[str, Any]) -> None:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
         if sheet.max_row > 1:
             sheet.auto_filter.ref = f"A1:{sheet.cell(row=sheet.max_row, column=len(columns)).coordinate}"
+
+    activities_sheet.append(ACTIVITY_COLUMNS)
+    for activity in data.get("activities", []):
+        activities_sheet.append([activity.get(column) for column in ACTIVITY_COLUMNS])
+    _style_sheet(activities_sheet, ACTIVITY_COLUMNS)
+    for row in activities_sheet.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    for column, width in {"A": 38, "B": 38, "C": 23, "D": 22, "E": 18, "F": 70}.items():
+        activities_sheet.column_dimensions[column].width = width
+    if activities_sheet.max_row > 1:
+        activities_sheet.auto_filter.ref = f"A1:F{activities_sheet.max_row}"
 
     settings_sheet.append(("setting", "value"))
     for key, value in data["settings"].items():
@@ -191,7 +213,8 @@ def load_data() -> dict[str, Any]:
         for key, value in DEFAULTS.items():
             data.setdefault(key, value.copy() if isinstance(value, dict) else list(value))
     else:
-        data = {"settings": dict(DEFAULTS["settings"]), "companies": [], "applications": []}
+        data = {"settings": dict(DEFAULTS["settings"]), "companies": [], "applications": [], "activities": []}
+    data.setdefault("activities", [])
     _write_workbook(data)
     return data
 
@@ -206,6 +229,15 @@ def save_data(data: dict[str, Any]) -> dict[str, Any]:
 def dashboard() -> dict[str, Any]:
     data = load_data()
     apps = data["applications"]
+    activity_by_application: dict[str, list[dict[str, Any]]] = {}
+    for activity in data.get("activities", []):
+        activity_by_application.setdefault(activity.get("application_id", ""), []).append(activity)
+    for app in apps:
+        app["activities"] = sorted(
+            activity_by_application.get(app["id"], []),
+            key=lambda activity: activity.get("occurred_at", ""),
+            reverse=True,
+        )
     stale = get_stale_applications()
     active = [a for a in apps if a.get("status") not in {"offer", "rejected", "withdrawn"}]
     return {
@@ -263,6 +295,7 @@ def add_application(payload: dict[str, Any]) -> dict[str, Any]:
         "created_at": datetime.now().isoformat(timespec="seconds"), "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     data["applications"].append(application)
+    _record_activity(data, application, "role_added", f"Added to pipeline with status: {status_names_for_log(status)}.")
     save_data(data)
     return application
 
@@ -273,6 +306,7 @@ def update_application(application_id: str, changes: dict[str, Any]) -> dict[str
     app = next((a for a in data["applications"] if a["id"] == application_id), None)
     if not app:
         raise ValueError("Application not found")
+    previous_status = app.get("status", "")
     allowed = {"status", "url", "location", "source", "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "role"}
     for key, value in changes.items():
         if key in allowed:
@@ -280,8 +314,47 @@ def update_application(application_id: str, changes: dict[str, Any]) -> dict[str
                 raise ValueError(f"Unknown status: {value}")
             app[key] = value
     app["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if app.get("status") != previous_status:
+        app["last_activity_date"] = _today()
+        _record_activity(data, app, "status_change", f"Status changed from {status_names_for_log(previous_status)} to {status_names_for_log(app['status'])}.")
     save_data(data)
     return app
+
+
+def status_names_for_log(status: str) -> str:
+    return str(status or "Unknown").replace("_", " ").capitalize()
+
+
+def _record_activity(data: dict[str, Any], app: dict[str, Any], activity_type: str, note: str) -> dict[str, Any]:
+    activity = {
+        "id": str(uuid.uuid4()),
+        "application_id": app["id"],
+        "occurred_at": datetime.now().isoformat(timespec="seconds"),
+        "type": activity_type,
+        "status": app.get("status", ""),
+        "note": note.strip(),
+    }
+    data.setdefault("activities", []).append(activity)
+    return activity
+
+
+@_synchronized
+def log_application_activity(application_id: str, activity_type: str, note: str) -> dict[str, Any]:
+    activity_type = activity_type.strip().lower()
+    note = note.strip()
+    if activity_type not in ACTIVITY_TYPES - {"role_added", "status_change"}:
+        raise ValueError("Choose a valid activity type")
+    if not note:
+        raise ValueError("Add a note before logging this activity")
+    data = load_data()
+    app = next((item for item in data["applications"] if item["id"] == application_id), None)
+    if not app:
+        raise ValueError("Application not found")
+    activity = _record_activity(data, app, activity_type, note)
+    app["last_activity_date"] = _today()
+    app["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    save_data(data)
+    return activity
 
 
 @_synchronized

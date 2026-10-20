@@ -10,6 +10,7 @@ let companyLogoFiles = {};
 let companyLogoPromise;
 
 const statusNames = { watching: 'Watching', saved: 'Saved', applied: 'Applied', screening: 'Screening', interview: 'Interview', offer: 'Offer', rejected: 'Not selected', withdrawn: 'Withdrawn' };
+const activityNames = { role_added: 'Role added', status_change: 'Status change', note: 'Note', recruiter_contact: 'Recruiter contact', interview: 'Interview', follow_up: 'Follow-up' };
 const terminal = new Set(['offer', 'rejected', 'withdrawn']);
 const initials = (value = '') => value.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 const safeWebsite = value => {
@@ -24,6 +25,18 @@ const prettyDate = value => {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+
+function renderActivityTimeline(app) {
+  const activities = app?.activities || [];
+  $('#activity-count').textContent = activities.length;
+  $('#activity-timeline').innerHTML = activities.length
+    ? activities.map(activity => {
+      const date = new Date(activity.occurred_at);
+      const when = Number.isNaN(date.valueOf()) ? activity.occurred_at : date.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      return `<article class="timeline-entry"><span class="timeline-dot"></span><div class="timeline-entry-head"><strong>${esc(activityNames[activity.type] || activity.type)}</strong><time>${esc(when)}</time></div>${activity.status ? `<small class="timeline-status">${esc(statusNames[activity.status] || activity.status)}</small>` : ''}<p>${esc(activity.note)}</p></article>`;
+    }).join('')
+    : '<p class="timeline-empty">No activity yet. Log recruiter conversations, interviews, and follow-ups here.</p>';
+}
 
 function companyMark(name, className, index) {
   const filename = companyLogoFiles[name];
@@ -117,7 +130,7 @@ function render() {
   $('#company-list').innerHTML = state.companies.map((company, index) => {
     const count = state.applications.filter(app => app.company_id === company.id).length;
     const website = safeWebsite(company.website || '');
-    return `<article class="company-chip"><button type="button" class="company-focus" data-company="${esc(company.name)}" aria-label="Show roles at ${esc(company.name)}">${companyMark(company.name, 'mini-logo', index)}<span class="company-chip-copy"><strong>${esc(company.name)}</strong><small>${count ? `${count} ${count === 1 ? 'role' : 'roles'} · View` : 'On your radar · View roles'}</small></span><span class="company-arrow">↗</span></button>${website ? `<a class="company-site" href="${esc(website)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(company.name)} website">Website</a>` : '<span class="company-site-placeholder" aria-hidden="true"></span>'}</article>`;
+    return `<article class="company-chip"><button type="button" class="company-focus" data-company="${esc(company.name)}" aria-label="Show roles at ${esc(company.name)}">${companyMark(company.name, 'mini-logo', index)}<span class="company-chip-copy"><strong>${esc(company.name)}</strong><small>${count ? `${count} ${count === 1 ? 'role' : 'roles'} · View` : 'On your radar · View roles'}</small></span><span class="company-arrow">↗</span></button>${website ? `<a class="company-site" href="${esc(website)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(company.name)} career portal">Careers</a>` : '<span class="company-site-placeholder" aria-hidden="true"></span>'}</article>`;
   }).join('');
   $('#company-empty').classList.toggle('hidden', state.companies.length > 0);
   $('#company-suggestions').innerHTML = state.companies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
@@ -221,13 +234,26 @@ function setupEvents() {
   $('#activity-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (!editingApplicationId) return;
-    const changes = Object.fromEntries(new FormData(event.currentTarget));
-    changes.last_activity_date = new Date().toISOString().slice(0, 10);
+    const form = event.currentTarget;
+    const changes = Object.fromEntries(['status', 'role', 'applied_date', 'follow_up_date', 'next_action', 'notes'].map(name => [name, form.elements[name].value]));
     try {
       await api(`/api/applications/${encodeURIComponent(editingApplicationId)}`, changes);
       closeDialog('activity-dialog');
       await refresh();
       notify('Opportunity updated');
+    } catch (error) { notify(error.message, true); }
+  });
+  $('#log-activity-button').addEventListener('click', async () => {
+    if (!editingApplicationId) return;
+    const form = $('#activity-form');
+    const note = form.elements.timeline_note.value.trim();
+    if (!note) return notify('Add a note before logging this activity', true);
+    try {
+      await api(`/api/applications/${encodeURIComponent(editingApplicationId)}/activity`, { type: form.elements.timeline_type.value, note });
+      form.elements.timeline_note.value = '';
+      await refresh();
+      renderActivityTimeline(state.applications.find(app => app.id === editingApplicationId));
+      notify('Activity added to the timeline');
     } catch (error) { notify(error.message, true); }
   });
   $('#application-list').addEventListener('click', async event => {
@@ -239,6 +265,9 @@ function setupEvents() {
     $('#activity-subtitle').textContent = `${app.role} · ${app.company}`;
     const form = $('#activity-form');
     for (const field of ['status', 'role', 'applied_date', 'follow_up_date', 'next_action', 'notes']) form.elements[field].value = app[field] || '';
+    form.elements.timeline_type.value = 'note';
+    form.elements.timeline_note.value = '';
+    renderActivityTimeline(app);
     if (app.role?.trim().toLowerCase() === 'not specified') form.elements.role.value = '';
     openDialog('activity-dialog');
   });
