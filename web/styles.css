@@ -22,3 +22,42 @@
 .brand-logo img{display:block;width:100%;height:100%;padding:3px;object-fit:contain}
 .brand-logo .logo-fallback{width:100%;height:100%;border-radius:inherit;place-items:center;font-size:9px;font-weight:700}
 .brand-logo .logo-fallback[hidden]{display:none}
+
+/* Use more of wide screens and give the compact dashboard text a little room. */
+@media(min-width:1151px){
+  .content-wrap{max-width:none;padding-left:28px;padding-right:28px}
+  .topbar{padding-left:28px;padding-right:28px}
+  .dashboard-grid{grid-template-columns:minmax(0,1.7fr) minmax(320px,.9fr);gap:12px}
+  .primary-column,.right-column{gap:12px}
+}
+.breadcrumb{font-size:12px}
+.today-label{font-size:11px}
+.welcome-subtitle{font-size:13px}
+.workspace-label,.nav-section-title{font-size:10px}
+.stat-top{font-size:11px}
+.stat-foot{font-size:10px}
+.section-kicker{font-size:9px}
+.panel-heading h2,.followup-heading h2{font-size:17px}
+.text-action{font-size:11px}
+.filter-tab{font-size:10px}
+.filter-tab span{font-size:9px}
+.search-box{font-size:11px}
+.search-box input{font-size:10px}
+.company-role strong{font-size:11px}
+.company-role small{font-size:10px}
+.app-meta{font-size:10px}
+.app-meta span{font-size:9px}
+.status-pill{font-size:9px}
+.company-chip strong{font-size:10px}
+.company-chip small{font-size:9px}
+.followup-intro{font-size:10px}
+.followup-copy strong{font-size:10px}
+.followup-copy small{font-size:9px}
+.days-tag{font-size:9px}
+.assistant-title{font-size:11px}
+.assistant-subtitle{font-size:9px}
+.assistant-message p{font-size:10px}
+.suggestion-chip{font-size:9px}
+.chat-bubble{font-size:10px}
+.chat-composer input{font-size:10px}
+.page-footer{font-size:9px}
