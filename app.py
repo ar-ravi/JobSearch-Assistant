@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from agent import AgentUnavailable, ask_agent
-from storage import add_application, add_company, dashboard, log_application_activity, set_stale_after_days, update_application
+from storage import DATA_FILE, add_application, add_company, dashboard, import_workbook, log_application_activity, set_stale_after_days, update_application
 
 ROOT = Path(__file__).parent
 WEB = ROOT / "web"
@@ -33,6 +33,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         request_path = urlsplit(self.path).path
+        if request_path == "/api/export":
+            try:
+                content = DATA_FILE.read_bytes()
+            except OSError as exc:
+                return self._json({"error": f"Could not read tracker workbook: {exc}"}, 500)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", 'attachment; filename="job_tracker.xlsx"')
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
+            return
         if request_path == "/api/dashboard":
             return self._json(dashboard())
         if request_path == "/api/health":
@@ -66,8 +79,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
-            payload = self._body()
             request_path = urlsplit(self.path).path
+            if request_path == "/api/import":
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length > 10 * 1024 * 1024:
+                    return self._json({"error": "The workbook must be smaller than 10 MB"}, 413)
+                result = import_workbook(self.rfile.read(content_length))
+                return self._json({"imported": result})
+            payload = self._body()
             if request_path == "/api/companies":
                 return self._json(add_company(payload.get("name", ""), payload.get("roles_to_watch", []), payload.get("website", "")), 201)
             if request_path == "/api/applications":

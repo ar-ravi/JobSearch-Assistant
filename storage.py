@@ -72,9 +72,9 @@ def _read_sheet(sheet: Any, columns: tuple[str, ...]) -> list[dict[str, Any]]:
     return rows
 
 
-def _read_workbook() -> dict[str, Any]:
+def _read_workbook(path: Path = DATA_FILE) -> dict[str, Any]:
     try:
-        workbook = load_workbook(DATA_FILE, read_only=True, data_only=True)
+        workbook = load_workbook(path, read_only=True, data_only=True)
         required = {"Applications", "Companies", "Settings"}
         missing = required.difference(workbook.sheetnames)
         if missing:
@@ -91,7 +91,7 @@ def _read_workbook() -> dict[str, Any]:
     except (OSError, ValueError, KeyError) as exc:
         if isinstance(exc, ValueError) and str(exc).startswith("Tracker workbook"):
             raise
-        raise ValueError(f"Could not read {DATA_FILE.name}: {exc}") from exc
+        raise ValueError(f"Could not read {path.name}: {exc}") from exc
 
     for company in companies:
         company["roles_to_watch"] = [role.strip() for role in _text(company.get("roles_to_watch")).split(";") if role.strip()]
@@ -105,6 +105,41 @@ def _read_workbook() -> dict[str, Any]:
             activity[key] = _text(activity.get(key))
     settings.setdefault("stale_after_days", DEFAULTS["settings"]["stale_after_days"])
     return {"settings": settings, "companies": companies, "applications": applications, "activities": activities}
+
+
+@_synchronized
+def import_workbook(contents: bytes) -> dict[str, int]:
+    """Validate and replace the tracker from an exported workbook."""
+    if not contents:
+        raise ValueError("Choose an Excel workbook to import")
+    if len(contents) > 10 * 1024 * 1024:
+        raise ValueError("The workbook must be smaller than 10 MB")
+    import_path = DATA_DIR / "job_tracker.import.xlsx"
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        import_path.write_bytes(contents)
+        data = _read_workbook(import_path)
+    finally:
+        import_path.unlink(missing_ok=True)
+
+    company_ids = [company["id"] for company in data["companies"]]
+    application_ids = [application["id"] for application in data["applications"]]
+    activity_ids = [activity["id"] for activity in data["activities"]]
+    if len(company_ids) != len(set(company_ids)) or len(application_ids) != len(set(application_ids)) or len(activity_ids) != len(set(activity_ids)):
+        raise ValueError("The workbook contains duplicate record IDs")
+    if any(not company["id"] or not company["name"] for company in data["companies"]):
+        raise ValueError("Every company row must have an ID and company name")
+    if any(not application["id"] or not application["company"] or not application["role"] for application in data["applications"]):
+        raise ValueError("Every application row must have an ID, company, and role")
+    if any(activity["application_id"] not in set(application_ids) for activity in data["activities"]):
+        raise ValueError("An activity refers to an application that is missing from the workbook")
+
+    save_data(data)
+    return {
+        "companies": len(data["companies"]),
+        "applications": len(data["applications"]),
+        "activities": len(data["activities"]),
+    }
 
 
 def _style_sheet(sheet: Any, columns: tuple[str, ...]) -> None:

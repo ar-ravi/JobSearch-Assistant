@@ -228,6 +228,31 @@ function setupEvents() {
     try { await api('/api/settings', { stale_after_days: Number(new FormData(event.currentTarget).get('stale_after_days')) }); closeDialog('settings-dialog'); await refresh(); notify('Reminder setting saved'); }
     catch (error) { notify(error.message, true); }
   });
+  $('#import-file').addEventListener('change', event => {
+    $('#import-button').disabled = !event.currentTarget.files.length;
+  });
+  $('#import-button').addEventListener('click', async () => {
+    const input = $('#import-file');
+    const file = input.files[0];
+    if (!file) return;
+    if (!confirm(`Import ${file.name}? This replaces the companies, applications, and activity currently in this tracker.`)) return;
+    const button = $('#import-button');
+    button.disabled = true;
+    button.textContent = 'Importing…';
+    try {
+      const response = await fetch('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not import workbook');
+      input.value = '';
+      await refresh();
+      notify(`Imported ${result.imported.applications} roles and ${result.imported.companies} companies`);
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      button.textContent = 'Import workbook';
+      button.disabled = !input.files.length;
+    }
+  });
   $('#model-form').addEventListener('submit', event => {
     event.preventDefault(); currentModel = new FormData(event.currentTarget).get('model'); localStorage.setItem('job-agent-model', currentModel); closeDialog('model-dialog'); notify(`Using ${currentModel}`);
   });

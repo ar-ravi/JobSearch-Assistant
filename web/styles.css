@@ -81,3 +81,9 @@
 .timeline-composer .field{font-size:9px}
 .timeline-composer .field select,.timeline-composer .field textarea{font-size:10px}
 .timeline-composer textarea{min-height:54px}
+.transfer-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:20px;padding:14px;border:1px solid #e8ece6;border-radius:10px;background:#f8faf7}
+.transfer-tools>div strong{font-size:12px;color:#455348}
+.transfer-tools>div p{margin:4px 0 0;color:#828c83;font-size:10px;line-height:1.5}
+.transfer-tools .field{grid-column:1/-1}
+.transfer-tools input[type=file]{width:100%;font-size:10px}
+.transfer-tools button:disabled{opacity:.5;cursor:not-allowed}

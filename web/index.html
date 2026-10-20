@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7f4">
   <title>Local Job Search Assistant</title>
-  <link rel="stylesheet" href="/styles.css?v=7">
+  <link rel="stylesheet" href="/styles.css?v=8">
   <link rel="stylesheet" href="/agent.css?v=3">
 </head>
 <body>
@@ -83,7 +83,7 @@
 
   <dialog id="company-dialog" class="modal"><form id="company-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">YOUR SHORTLIST</div><h2>Track a company</h2></div><button type="button" class="close-button" data-close="company-dialog">×</button></div><p class="modal-intro">Keep companies you’re interested in on your radar.</p><div class="form-grid"><label class="field full">Company name<input name="name" required placeholder="e.g. Figma"></label><label class="field full">Career portal URL<input name="website" type="url" placeholder="https://…"></label><label class="field full">Roles you’re interested in<input name="roles" placeholder="Product Engineer, AI Engineer"></label></div><div class="modal-actions"><button type="button" class="button secondary" data-close="company-dialog">Cancel</button><button class="button primary" type="submit">Add to watchlist <span>→</span></button></div></form></dialog>
 
-  <dialog id="settings-dialog" class="modal compact-modal"><form id="settings-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">YOUR PREFERENCES</div><h2>Reminder settings</h2></div><button type="button" class="close-button" data-close="settings-dialog">×</button></div><p class="modal-intro">We’ll flag active opportunities with no update after this many days.</p><label class="field">Follow-up reminder after <span class="inline-input"><input name="stale_after_days" type="number" min="1" max="365" value="14" required><span>days</span></span></label><div class="modal-actions"><button type="button" class="button secondary" data-close="settings-dialog">Cancel</button><button class="button primary" type="submit">Save setting</button></div></form></dialog>
+  <dialog id="settings-dialog" class="modal compact-modal"><form id="settings-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">YOUR PREFERENCES</div><h2>Reminder settings</h2></div><button type="button" class="close-button" data-close="settings-dialog">×</button></div><p class="modal-intro">We’ll flag active opportunities with no update after this many days.</p><label class="field">Follow-up reminder after <span class="inline-input"><input name="stale_after_days" type="number" min="1" max="365" value="14" required><span>days</span></span></label><div class="transfer-tools"><div><strong>Excel backup</strong><p>Download a copy or import a tracker workbook.</p></div><a class="button secondary small" href="/api/export">Download Excel</a><label class="field full">Import tracker workbook<input id="import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label><button id="import-button" class="button secondary small" type="button" disabled>Import workbook</button></div><div class="modal-actions"><button type="button" class="button secondary" data-close="settings-dialog">Close</button><button class="button primary" type="submit">Save setting</button></div></form></dialog>
 
   <dialog id="model-dialog" class="modal compact-modal"><form id="model-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">ON-DEVICE AI</div><h2>Choose your model</h2></div><button type="button" class="close-button" data-close="model-dialog">×</button></div><p class="modal-intro">Choose an Ollama model installed on this device.</p><label class="field">Model<select name="model" id="model-select"><option value="qwen3:4b">qwen3:4b (default)</option></select></label><div class="modal-actions"><button type="button" class="button secondary" data-close="model-dialog">Cancel</button><button class="button primary" type="submit">Use this model</button></div></form></dialog>
   <dialog id="activity-dialog" class="modal"><form id="activity-form" method="dialog">
@@ -96,6 +96,6 @@
     <div class="modal-actions"><button type="button" class="button secondary" data-close="activity-dialog">Close</button><button class="button primary" type="submit">Save opportunity</button></div>
   </form></dialog>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>
