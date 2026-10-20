@@ -1,10 +1,13 @@
-"""MCP tools for the local job tracker. Run with: python mcp_server.py"""
+"""Read-only MCP tools for the local job tracker. Run with: python mcp_server.py"""
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
-from storage import add_application, add_company, dashboard, get_stale_applications, update_application
+from storage import dashboard, get_stale_applications
 
-mcp = FastMCP("Local Job Search Assistant")
+mcp = MCPServer(
+    "Local Job Search Assistant",
+    instructions="Read-only tools for inspecting a private local job-search tracker. No tool can modify tracker data.",
+)
 
 
 @mcp.tool()
@@ -18,25 +21,6 @@ def list_applications(status: str = "") -> list[dict]:
     """List saved jobs and applications, optionally filtered by status."""
     applications = dashboard()["applications"]
     return [app for app in applications if not status or app.get("status") == status]
-
-
-@mcp.tool()
-def track_company(name: str, roles_to_watch: list[str] | None = None, website: str = "") -> dict:
-    """Add a company to the local watch list."""
-    return add_company(name, roles_to_watch, website)
-
-
-@mcp.tool()
-def save_job(company: str, role: str, url: str = "", status: str = "saved", location: str = "", source: str = "", notes: str = "") -> dict:
-    """Save a job listing or application in the local tracker."""
-    return add_application({"company": company, "role": role, "url": url, "status": status, "location": location, "source": source, "notes": notes})
-
-
-@mcp.tool()
-def update_job(application_id: str, status: str = "", last_activity_date: str = "", follow_up_date: str = "", next_action: str = "", notes: str = "") -> dict:
-    """Update status, activity, follow-up, next action, or notes for one saved job."""
-    changes = {k: v for k, v in {"status": status, "last_activity_date": last_activity_date, "follow_up_date": follow_up_date, "next_action": next_action, "notes": notes}.items() if v}
-    return update_application(application_id, changes)
 
 
 @mcp.tool()

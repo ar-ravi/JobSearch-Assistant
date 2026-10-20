@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from agent import AgentUnavailable, ask_agent
 from storage import add_application, add_company, dashboard, set_stale_after_days, update_application
 
 ROOT = Path(__file__).parent
 WEB = ROOT / "web"
 HOST, PORT = "127.0.0.1", 8765
-OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, payload: object, status: int = 200) -> None:
@@ -31,16 +32,18 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
 
     def do_GET(self) -> None:
-        if self.path == "/api/dashboard":
+        request_path = urlsplit(self.path).path
+        if request_path == "/api/dashboard":
             return self._json(dashboard())
-        if self.path == "/api/health":
+        if request_path == "/api/health":
+            mcp_installed = importlib.util.find_spec("mcp") is not None
             try:
                 with urlopen("http://127.0.0.1:11434/api/tags", timeout=1) as response:
                     models = json.loads(response.read()).get("models", [])
-                return self._json({"ollama": True, "models": [m["name"] for m in models]})
+                return self._json({"ollama": True, "models": [m["name"] for m in models], "mcp": mcp_installed})
             except (URLError, TimeoutError, ValueError):
-                return self._json({"ollama": False, "models": []})
-        relative = "index.html" if self.path == "/" else self.path.lstrip("/")
+                return self._json({"ollama": False, "models": [], "mcp": mcp_installed})
+        relative = "index.html" if request_path == "/" else request_path.lstrip("/")
         path = (WEB / relative).resolve()
         if not path.is_relative_to(WEB.resolve()) or not path.is_file():
             return self._json({"error": "Not found"}, 404)
@@ -48,6 +51,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(content)
 
@@ -74,22 +78,12 @@ class Handler(BaseHTTPRequestHandler):
         model = str(payload.get("model", "qwen3:4b")).strip()
         if not question:
             return self._json({"error": "Enter a question first"}, 400)
-        overview = dashboard()
-        system = (
-            "You are a private job-search assistant. Use only the supplied local tracker data. "
-            "Do not invent application facts. Recommend follow-ups based on dates and clearly label suggestions. "
-            "Never claim to submit applications or contact recruiters.\n\n"
-            f"Tracker data: {json.dumps(overview, ensure_ascii=False)}"
-        )
-        request = Request(OLLAMA_URL, data=json.dumps({"model": model, "stream": False, "messages": [{"role": "system", "content": system}, {"role": "user", "content": question}]}).encode(), headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urlopen(request, timeout=120) as response:
-                result = json.loads(response.read())
-            return self._json({"reply": result.get("message", {}).get("content", ""), "model": model})
-        except URLError as exc:
-            return self._json({"error": "Could not reach Ollama. Start Ollama locally and pull a model first."}, 503)
-        except TimeoutError:
-            return self._json({"error": "The local model took too long to respond."}, 504)
+            if importlib.util.find_spec("mcp") is None:
+                return self._json({"error": "Install project dependencies to enable MCP-powered chat: pip install -r requirements.txt"}, 503)
+            return self._json(ask_agent(question, model))
+        except AgentUnavailable as exc:
+            return self._json({"error": str(exc)}, 503)
 
     def log_message(self, fmt: str, *args: object) -> None:
         print("[local-app] " + fmt % args)

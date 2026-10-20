@@ -1,6 +1,6 @@
 # Local Job Search Assistant
 
-A private, local-first job application tracker with a local Ollama assistant and MCP tools. Your tracker lives on your machine in `data/job_tracker.json` and is excluded from Git.
+A private, local-first job application tracker with an Ollama agent connected to read-only MCP tools. Your tracker lives on your machine in `data/job_tracker.xlsx` and is excluded from Git.
 
 ## Run locally
 
@@ -22,8 +22,10 @@ The tracker works without Ollama. AI chat is optional and sends prompts only to 
 
 ## MCP tools
 
-Run `python mcp_server.py` to expose the same local tracker operations as MCP tools over stdio. Tools include listing companies/applications, adding or updating an application, and finding stale applications. The MCP process reads and writes the same ignored local JSON file as the dashboard.
+Run `python mcp_server.py` to expose tracker reads as MCP tools over stdio. The in-app copilot discovers those tools, passes them to Ollama for tool selection, executes the selected read-only MCP calls, and shows which tools it used. The model cannot save or modify tracker data through MCP. Changes remain explicit actions in the dashboard.
 
 ## Local data and backups
 
-The data file is created automatically on first run. You can edit `data/job_tracker.json` while the app is stopped, or back it up by copying that file. Do not commit it: the data folder is ignored by Git.
+The Excel workbook is created automatically on first run. If `data/job_tracker.json` exists from an older version, the app imports its records into the workbook the first time it starts; the JSON file is left in place as a backup. You can edit `data/job_tracker.xlsx` while the app is stopped, or back it up by copying that file. Do not commit it: local tracker files are ignored by Git.
+
+The workbook has `Applications`, `Companies`, and `Settings` sheets. Keep the header rows intact. Close the workbook in Excel before changing tracker data in the app so there is no conflict between unsaved spreadsheet edits and app updates.
