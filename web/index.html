@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7f4">
   <title>Local Job Search Assistant</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=4">
+  <link rel="stylesheet" href="/agent.css?v=3">
 </head>
 <body>
   <div class="app-shell">
@@ -23,7 +24,7 @@
       <div class="sidebar-divider"></div>
       <div class="nav-section-title">YOUR TOOLKIT</div>
       <div class="tool-row"><span class="tool-dot local-dot"></span><span>Local model</span><span id="model-status" class="tool-state">checking</span></div>
-      <div class="tool-row"><span class="tool-dot mcp-dot"></span><span>MCP tools</span><span class="tool-state connected">ready</span></div>
+      <div class="tool-row"><span class="tool-dot mcp-dot"></span><span>MCP tools</span><span id="mcp-status" class="tool-state">checking</span></div>
       <div class="sidebar-bottom">
         <div class="privacy-card"><span class="lock-icon">⌑</span><div><strong>Your data stays yours</strong><p>Stored locally on this device.<br>Never sent to a cloud service.</p></div></div>
         <button id="settings-button" class="profile-button"><span class="avatar">R</span><span class="profile-copy"><strong>Ravi's workspace</strong><small>Local account</small></span><span class="settings-gear">⚙</span></button>
@@ -36,10 +37,10 @@
         <section class="welcome-row"><div><div class="eyebrow"><span class="sparkle">✳</span> YOUR CAREER, IN MOTION</div><h1>Good things take <em>follow-through.</em></h1><p class="welcome-subtitle">Keep every opportunity moving, one thoughtful next step at a time.</p></div><div class="welcome-actions"><button id="add-company-top" class="button secondary"><span>＋</span> Track a company</button></div></section>
 
         <section class="stats-grid" aria-label="Application summary">
-          <article class="stat-card"><div class="stat-top"><span>Active opportunities</span><span class="stat-icon icon-lilac">↗</span></div><div class="stat-value" id="stat-active">0</div><div class="stat-foot">Roles in progress</div></article>
-          <article class="stat-card"><div class="stat-top"><span>Interviews</span><span class="stat-icon icon-blue">✳</span></div><div class="stat-value" id="stat-interviews">0</div><div class="stat-foot">A chance to shine</div></article>
-          <article class="stat-card"><div class="stat-top"><span>Offers</span><span class="stat-icon icon-green">✦</span></div><div class="stat-value" id="stat-offers">0</div><div class="stat-foot">Doors opened</div></article>
-          <article class="stat-card followup-stat"><div class="stat-top"><span>Follow-ups due</span><span class="stat-icon icon-amber">◷</span></div><div class="stat-value" id="stat-followups">0</div><div class="stat-foot" id="followup-caption">Stay on their radar</div></article>
+          <button class="stat-card" type="button" data-filter-card="active" aria-label="Show active opportunities"><span class="stat-top"><span>Active opportunities</span><span class="stat-icon icon-lilac">↗</span></span><span class="stat-value" id="stat-active">0</span><span class="stat-foot">Roles in progress · View</span></button>
+          <button class="stat-card" type="button" data-filter-card="interview" aria-label="Show interviews"><span class="stat-top"><span>Interviews</span><span class="stat-icon icon-blue">✳</span></span><span class="stat-value" id="stat-interviews">0</span><span class="stat-foot">A chance to shine · View</span></button>
+          <button class="stat-card" type="button" data-filter-card="offer" aria-label="Show offers"><span class="stat-top"><span>Offers</span><span class="stat-icon icon-green">✦</span></span><span class="stat-value" id="stat-offers">0</span><span class="stat-foot">Doors opened · View</span></button>
+          <button class="stat-card followup-stat" type="button" data-filter-card="followup" aria-label="Show applications needing follow-up"><span class="stat-top"><span>Follow-ups due</span><span class="stat-icon icon-amber">◷</span></span><span class="stat-value" id="stat-followups">0</span><span class="stat-foot" id="followup-caption">Stay on their radar · View</span></button>
         </section>
 
         <section class="dashboard-grid">
@@ -85,7 +86,8 @@
   <dialog id="settings-dialog" class="modal compact-modal"><form id="settings-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">YOUR PREFERENCES</div><h2>Reminder settings</h2></div><button type="button" class="close-button" data-close="settings-dialog">×</button></div><p class="modal-intro">We’ll flag active opportunities with no update after this many days.</p><label class="field">Follow-up reminder after <span class="inline-input"><input name="stale_after_days" type="number" min="1" max="365" value="14" required><span>days</span></span></label><div class="modal-actions"><button type="button" class="button secondary" data-close="settings-dialog">Cancel</button><button class="button primary" type="submit">Save setting</button></div></form></dialog>
 
   <dialog id="model-dialog" class="modal compact-modal"><form id="model-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">ON-DEVICE AI</div><h2>Choose your model</h2></div><button type="button" class="close-button" data-close="model-dialog">×</button></div><p class="modal-intro">Choose an Ollama model installed on this device.</p><label class="field">Model<select name="model" id="model-select"><option value="qwen3:4b">qwen3:4b (default)</option></select></label><div class="modal-actions"><button type="button" class="button secondary" data-close="model-dialog">Cancel</button><button class="button primary" type="submit">Use this model</button></div></form></dialog>
+  <dialog id="activity-dialog" class="modal"><form id="activity-form" method="dialog"><div class="modal-head"><div><div class="section-kicker">KEEP YOUR PIPELINE CURRENT</div><h2>Update opportunity</h2></div><button type="button" class="close-button" data-close="activity-dialog">×</button></div><p id="activity-subtitle" class="modal-intro"></p><div class="form-grid"><label class="field full">Role title<input name="role" placeholder="Leave blank if unknown"></label><label class="field">Status<select name="status"><option value="watching">Watching</option><option value="saved">Saved</option><option value="applied">Applied</option><option value="screening">Screening</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Not selected</option><option value="withdrawn">Withdrawn</option></select></label><label class="field">Applied date<input name="applied_date" type="date"></label><label class="field">Follow-up date<input name="follow_up_date" type="date"></label><label class="field">Next action<input name="next_action" placeholder="e.g. Send recruiter a note"></label><label class="field full">Notes<textarea name="notes" rows="4" placeholder="Add a conversation note or update…"></textarea></label></div><div class="modal-actions"><button type="button" class="button secondary" data-close="activity-dialog">Cancel</button><button class="button primary" type="submit">Save update</button></div></form></dialog>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>
