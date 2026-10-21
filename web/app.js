@@ -1,6 +1,6 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-let state = { companies: [], applications: [], stats: {}, stale: [], settings: { stale_after_days: 14 } };
+let state = { companies: [], applications: [], stats: {}, stale: [], followups: [], settings: { stale_after_days: 14 } };
 let currentFilter = 'all';
 let currentModel = localStorage.getItem('job-agent-model') || 'qwen3:4b';
 let editingApplicationId = null;
@@ -68,7 +68,7 @@ function matchesFilter(app) {
   if (currentFilter === 'closed') return terminal.has(app.status);
   if (currentFilter === 'interview') return app.status === 'interview';
   if (currentFilter === 'offer') return app.status === 'offer';
-  if (currentFilter === 'followup') return state.stale.some(stale => stale.id === app.id);
+  if (currentFilter === 'followup') return state.followups.some(item => item.id === app.id);
   return true;
 }
 
@@ -82,9 +82,11 @@ function setFilter(filter) {
 function focusApplication(applicationId) {
   const app = state.applications.find(item => item.id === applicationId);
   if (!app) return;
-  focusedApplicationId = app.id;
+  focusedApplicationId = null;
+  $('#status-filter').value = 'all';
   $('#search-input').value = `${app.company} ${app.role}`;
   setFilter('all');
+  focusedApplicationId = app.id;
   $('#applications').scrollIntoView({ behavior: 'smooth', block: 'start' });
   requestAnimationFrame(() => {
     const row = $(`[data-application-id="${CSS.escape(applicationId)}"]`);
@@ -106,7 +108,20 @@ function render() {
   $('#settings-form [name="stale_after_days"]').value = state.settings.stale_after_days;
 
   const query = $('#search-input').value.trim().toLowerCase();
-  const shown = state.applications.filter(app => matchesFilter(app) && (!focusedApplicationId || app.id === focusedApplicationId) && `${app.company} ${app.role} ${app.status} ${app.location}`.toLowerCase().includes(query));
+  const selectedStatus = $('#status-filter').value;
+  const sortBy = $('#sort-applications').value;
+  const shown = state.applications
+    .filter(app => {
+      const searchable = [app.company, app.role, app.status, statusNames[app.status], app.location, app.url, app.source, app.applied_date, app.follow_up_date, app.next_action, app.notes, ...(app.activities || []).map(activity => activity.note)].join(' ').toLowerCase();
+      return matchesFilter(app) && (!focusedApplicationId || app.id === focusedApplicationId) && (selectedStatus === 'all' || app.status === selectedStatus) && searchable.includes(query);
+    })
+    .sort((a, b) => {
+      if (sortBy === 'company') return a.company.localeCompare(b.company) || a.role.localeCompare(b.role);
+      if (sortBy === 'follow-up') return (a.follow_up_date || '9999-12-31').localeCompare(b.follow_up_date || '9999-12-31') || a.company.localeCompare(b.company);
+      if (sortBy === 'applied') return (b.applied_date || '').localeCompare(a.applied_date || '') || b.updated_at.localeCompare(a.updated_at);
+      return b.updated_at.localeCompare(a.updated_at);
+    });
+  $('#application-result-count').textContent = `${shown.length} ${shown.length === 1 ? 'opportunity' : 'opportunities'}`;
   $('#application-list').innerHTML = shown.map((app, index) => {
     const roleMissing = !app.role || app.role.trim().toLowerCase() === 'not specified';
     const companyLine = roleMissing ? 'Role not specified' : `${esc(app.company)}${app.location ? ` · ${esc(app.location)}` : ''}`;
@@ -135,9 +150,15 @@ function render() {
   $('#company-empty').classList.toggle('hidden', state.companies.length > 0);
   $('#company-suggestions').innerHTML = state.companies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
 
-  $('#followup-list').innerHTML = state.stale.slice(0, 4).map(app => `<button type="button" class="followup-item" data-follow-up="${esc(app.id)}" aria-label="Open ${esc(app.role)} at ${esc(app.company)}"><span class="followup-monogram">${esc(initials(app.company))}</span><span class="followup-copy"><strong>${esc(app.company)} · ${esc(app.role)}</strong><small>${esc(app.next_action || 'Consider a thoughtful check-in')}</small></span><span class="days-tag">${app.days_since_activity}d</span></button>`).join('');
-  $('#followup-empty').classList.toggle('hidden', state.stale.length > 0);
-  $('#followup-list').classList.toggle('hidden', state.stale.length === 0);
+  $('#followup-list').innerHTML = state.followups.slice(0, 4).map(app => {
+    const timing = app.reminder_type === 'scheduled'
+      ? (app.days_overdue === 0 ? 'Due today' : `${app.days_overdue}d overdue`)
+      : `${app.days_since_activity}d quiet`;
+    const label = app.reminder_type === 'scheduled' ? `Follow-up ${prettyDate(app.reminder_date)}` : 'No recent activity';
+    return `<button type="button" class="followup-item" data-follow-up="${esc(app.id)}" aria-label="Open ${esc(app.role)} at ${esc(app.company)}"><span class="followup-monogram">${esc(initials(app.company))}</span><span class="followup-copy"><strong>${esc(app.company)} · ${esc(app.role)}</strong><small>${esc(app.next_action || label)}</small></span><span class="days-tag">${esc(timing)}</span></button>`;
+  }).join('');
+  $('#followup-empty').classList.toggle('hidden', state.followups.length > 0);
+  $('#followup-list').classList.toggle('hidden', state.followups.length === 0);
 }
 
 async function refresh() {
@@ -191,17 +212,23 @@ function setupEvents() {
   $('#model-button').addEventListener('click', () => openDialog('model-dialog'));
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('.filter-tab').forEach(button => button.addEventListener('click', () => {
+    focusedApplicationId = null;
     setFilter(button.dataset.filter);
   }));
   $$('[data-filter-card]').forEach(card => card.addEventListener('click', () => {
+    focusedApplicationId = null;
+    $('#status-filter').value = 'all';
     setFilter(card.dataset.filterCard);
     $('#applications').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   $('#search-input').addEventListener('input', () => { focusedApplicationId = null; render(); });
+  $('#status-filter').addEventListener('change', () => { focusedApplicationId = null; render(); });
+  $('#sort-applications').addEventListener('change', render);
   $('#company-list').addEventListener('click', event => {
     const button = event.target.closest('[data-company]');
     if (!button) return;
     focusedApplicationId = null;
+    $('#status-filter').value = 'all';
     $('#search-input').value = button.dataset.company;
     setFilter('all');
     $('#applications').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -231,6 +258,31 @@ function setupEvents() {
   $('#import-file').addEventListener('change', event => {
     $('#import-button').disabled = !event.currentTarget.files.length;
   });
+  $('#csv-import-file').addEventListener('change', event => {
+    $('#csv-import-button').disabled = !event.currentTarget.files.length;
+  });
+  $('#csv-import-button').addEventListener('click', async () => {
+    const input = $('#csv-import-file');
+    const file = input.files[0];
+    if (!file) return;
+    if (!confirm(`Import applications from ${file.name}? New records will be added; matching existing records will be skipped.`)) return;
+    const button = $('#csv-import-button');
+    button.disabled = true;
+    button.textContent = 'Importing…';
+    try {
+      const response = await fetch('/api/import.csv', { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: file });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not import CSV');
+      input.value = '';
+      await refresh();
+      notify(`Added ${result.imported.imported} opportunities; skipped ${result.imported.skipped} duplicates`);
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      button.textContent = 'Import CSV';
+      button.disabled = !input.files.length;
+    }
+  });
   $('#import-button').addEventListener('click', async () => {
     const input = $('#import-file');
     const file = input.files[0];
@@ -249,7 +301,7 @@ function setupEvents() {
     } catch (error) {
       notify(error.message, true);
     } finally {
-      button.textContent = 'Import workbook';
+      button.textContent = 'Restore Excel backup';
       button.disabled = !input.files.length;
     }
   });

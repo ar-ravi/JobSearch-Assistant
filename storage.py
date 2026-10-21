@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import csv
+import io
 import os
 import threading
 import uuid
@@ -142,6 +144,76 @@ def import_workbook(contents: bytes) -> dict[str, int]:
     }
 
 
+@_synchronized
+def import_applications_csv(contents: bytes) -> dict[str, int]:
+    """Add application rows from CSV without replacing the existing tracker."""
+    if not contents:
+        raise ValueError("Choose a CSV file to import")
+    if len(contents) > 10 * 1024 * 1024:
+        raise ValueError("The CSV must be smaller than 10 MB")
+    try:
+        text = contents.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise ValueError("Could not read the CSV file. Save it as UTF-8 and try again.") from exc
+    headers = {header.strip().lower() for header in (reader.fieldnames or []) if header}
+    if not {"company", "role"}.issubset(headers):
+        raise ValueError("CSV must include Company and Role columns")
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        normalized = {str(key or "").strip().lower(): str(value or "").strip() for key, value in row.items()}
+        company = normalized.get("company", "")
+        role = normalized.get("role", "")
+        if not company and not role and not any(normalized.values()):
+            continue
+        if not company or not role:
+            raise ValueError("Each CSV application row needs both Company and Role")
+        status = normalized.get("status", "saved").lower() or "saved"
+        if status not in STATUSES:
+            raise ValueError(f"Unknown status in CSV: {status}")
+        rows.append(normalized)
+        if len(rows) > 5000:
+            raise ValueError("CSV import is limited to 5,000 application rows")
+
+    data = load_data()
+    existing_ids = {app["id"] for app in data["applications"]}
+    imported_ids: set[str] = set()
+    existing_keys = {
+        (app.get("company", "").casefold(), app.get("role", "").casefold(), app.get("url", "").casefold())
+        for app in data["applications"]
+    }
+    imported = 0
+    skipped = 0
+    for row in rows:
+        company_name, role = row["company"], row["role"]
+        url = row.get("url", "")
+        key = (company_name.casefold(), role.casefold(), url.casefold())
+        if key in existing_keys or (row.get("id") and (row["id"] in existing_ids or row["id"] in imported_ids)):
+            skipped += 1
+            continue
+        company = next((item for item in data["companies"] if item["name"].casefold() == company_name.casefold()), None)
+        if not company:
+            company = {"id": str(uuid.uuid4()), "name": company_name, "roles_to_watch": [], "website": "", "added_date": _today()}
+            data["companies"].append(company)
+        now = datetime.now().isoformat(timespec="seconds")
+        status = row.get("status", "saved").lower() or "saved"
+        application = {
+            "id": row.get("id") or str(uuid.uuid4()), "company_id": company["id"], "company": company["name"], "role": role,
+            "url": url, "location": row.get("location", ""), "source": row.get("source", ""), "status": status,
+            "applied_date": row.get("applied_date", ""), "last_activity_date": row.get("last_activity_date", "") or _today(),
+            "follow_up_date": row.get("follow_up_date", ""), "next_action": row.get("next_action", ""), "notes": row.get("notes", ""),
+            "created_at": row.get("created_at", "") or now, "updated_at": now,
+        }
+        data["applications"].append(application)
+        imported_ids.add(application["id"])
+        existing_keys.add(key)
+        _record_activity(data, application, "role_added", "Imported from CSV.")
+        imported += 1
+    if imported:
+        save_data(data)
+    return {"imported": imported, "skipped": skipped}
+
+
 def _style_sheet(sheet: Any, columns: tuple[str, ...]) -> None:
     sheet.freeze_panes = "A2"
     sheet.sheet_view.showGridLines = False
@@ -274,6 +346,7 @@ def dashboard() -> dict[str, Any]:
             reverse=True,
         )
     stale = get_stale_applications()
+    followups = get_follow_up_applications()
     active = [a for a in apps if a.get("status") not in {"offer", "rejected", "withdrawn"}]
     return {
         "companies": data["companies"],
@@ -282,9 +355,10 @@ def dashboard() -> dict[str, Any]:
             "active": len(active),
             "interviews": sum(a.get("status") == "interview" for a in apps),
             "offers": sum(a.get("status") == "offer" for a in apps),
-            "needs_follow_up": len(stale),
+            "needs_follow_up": len(followups),
         },
         "stale": stale,
+        "followups": followups,
         "settings": data["settings"],
     }
 
@@ -401,6 +475,12 @@ def get_stale_applications() -> list[dict[str, Any]]:
     for app in data["applications"]:
         if app.get("status") in {"offer", "rejected", "withdrawn"}:
             continue
+        scheduled = app.get("follow_up_date", "")
+        try:
+            if scheduled and date.fromisoformat(scheduled) > date.today():
+                continue
+        except ValueError:
+            pass
         reference = app.get("last_activity_date") or app.get("applied_date")
         if not reference:
             continue
@@ -412,6 +492,50 @@ def get_stale_applications() -> list[dict[str, Any]]:
         if activity_date <= cutoff:
             stale.append({**app, "days_since_activity": days})
     return sorted(stale, key=lambda a: a["days_since_activity"], reverse=True)
+
+
+@_synchronized
+def get_follow_up_applications() -> list[dict[str, Any]]:
+    """Return active applications with an explicit due date or stale activity."""
+    data = load_data()
+    today = date.today()
+    by_id: dict[str, dict[str, Any]] = {}
+    has_future_follow_up: set[str] = set()
+    for app in data["applications"]:
+        if app.get("status") in {"offer", "rejected", "withdrawn"}:
+            continue
+        follow_up_date = app.get("follow_up_date", "")
+        if follow_up_date:
+            try:
+                due = date.fromisoformat(follow_up_date)
+            except ValueError:
+                due = None
+            if due and due > today:
+                has_future_follow_up.add(app["id"])
+            if due and due <= today:
+                by_id[app["id"]] = {
+                    **app,
+                    "reminder_type": "scheduled",
+                    "days_overdue": (today - due).days,
+                    "reminder_date": follow_up_date,
+                }
+    for app in get_stale_applications():
+        if app["id"] in has_future_follow_up:
+            continue
+        by_id.setdefault(app["id"], {
+            **app,
+            "reminder_type": "stale",
+            "days_overdue": 0,
+            "reminder_date": app.get("last_activity_date") or app.get("applied_date", ""),
+        })
+    return sorted(
+        by_id.values(),
+        key=lambda app: (
+            0 if app["reminder_type"] == "scheduled" else 1,
+            app.get("reminder_date", ""),
+            app.get("company", "").casefold(),
+        ),
+    )
 
 
 @_synchronized

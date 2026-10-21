@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import csv
+import io
 import importlib.util
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,7 +14,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from agent import AgentUnavailable, ask_agent
-from storage import DATA_FILE, add_application, add_company, dashboard, import_workbook, log_application_activity, set_stale_after_days, update_application
+from storage import DATA_FILE, add_application, add_company, dashboard, import_applications_csv, import_workbook, log_application_activity, set_stale_after_days, update_application
 
 ROOT = Path(__file__).parent
 WEB = ROOT / "web"
@@ -41,6 +43,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             self.send_header("Content-Disposition", 'attachment; filename="job_tracker.xlsx"')
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
+            return
+        if request_path == "/api/export.csv":
+            output = io.StringIO(newline="")
+            applications = dashboard()["applications"]
+            columns = (
+                "id", "company_id", "company", "role", "url", "location", "source", "status",
+                "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "created_at", "updated_at",
+            )
+            writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(applications)
+            content = output.getvalue().encode("utf-8-sig")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="job_applications.csv"')
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -86,6 +107,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "The workbook must be smaller than 10 MB"}, 413)
                 result = import_workbook(self.rfile.read(content_length))
                 return self._json({"imported": result})
+            if request_path == "/api/import.csv":
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length > 10 * 1024 * 1024:
+                    return self._json({"error": "The CSV must be smaller than 10 MB"}, 413)
+                return self._json({"imported": import_applications_csv(self.rfile.read(content_length))})
             payload = self._body()
             if request_path == "/api/companies":
                 return self._json(add_company(payload.get("name", ""), payload.get("roles_to_watch", []), payload.get("website", "")), 201)
