@@ -4,6 +4,7 @@ let state = { companies: [], applications: [], stats: {}, stale: [], followups: 
 let currentFilter = 'all';
 let currentModel = localStorage.getItem('job-agent-model') || 'qwen3:4b';
 let editingApplicationId = null;
+let matchApplicationId = null;
 let focusedApplicationId = null;
 let toastTimer;
 let companyLogoFiles = {};
@@ -36,6 +37,21 @@ function renderActivityTimeline(app) {
       return `<article class="timeline-entry"><span class="timeline-dot"></span><div class="timeline-entry-head"><strong>${esc(activityNames[activity.type] || activity.type)}</strong><time>${esc(when)}</time></div>${activity.status ? `<small class="timeline-status">${esc(statusNames[activity.status] || activity.status)}</small>` : ''}<p>${esc(activity.note)}</p></article>`;
     }).join('')
     : '<p class="timeline-empty">No activity yet. Log recruiter conversations, interviews, and follow-ups here.</p>';
+}
+
+function showMatchDialog(app) {
+  matchApplicationId = app.id;
+  const analysis = app.match_analysis || { score: null, matched: [], gaps: [], explanation: 'No match analysis is available.' };
+  $('#match-title').textContent = `${app.role} · ${app.company}`;
+  const matched = (analysis.matched || []).map(item => `<li><strong>${esc(item.requirement)}</strong><span>${item.coverage}% keyword coverage · ${esc(item.evidence || `Profile terms: ${(item.supported_terms || []).join(', ')}`)}</span></li>`).join('');
+  const gaps = (analysis.gaps || []).map(item => `<li><strong>${esc(item.requirement)}</strong><span>Not found in profile: ${esc((item.missing_terms || []).join(', '))}</span></li>`).join('');
+  $('#match-summary').innerHTML = `<div class="match-score-card"><strong>${analysis.score === null || analysis.score === undefined ? '—' : `${analysis.score}%`}</strong><span>keyword coverage</span></div><p>${esc(analysis.explanation || '')}</p><div class="match-columns"><section><h3>Supported by your profile (${(analysis.matched || []).length})</h3><ul>${matched || '<li class="match-empty">No requirements matched yet.</li>'}</ul></section><section><h3>Gaps to review (${(analysis.gaps || []).length})</h3><ul>${gaps || '<li class="match-empty">No gaps identified.</li>'}</ul></section></div>`;
+  $('#tailoring-results').classList.add('hidden');
+  $('#tailoring-evidence').innerHTML = '';
+  $('#cover-note-draft').value = '';
+  $('#tailor-button').disabled = false;
+  $('#tailor-button').textContent = 'Suggest evidence to highlight with local AI';
+  openDialog('match-dialog');
 }
 
 function companyMark(name, className, index) {
@@ -106,6 +122,12 @@ function render() {
   $('#filter-all').textContent = state.applications.length;
   $('#threshold-value').textContent = `${state.settings.stale_after_days} days`;
   $('#settings-form [name="stale_after_days"]').value = state.settings.stale_after_days;
+  const profileForm = $('#profile-form');
+  if (profileForm && !profileForm.contains(document.activeElement)) {
+    const profile = state.candidate_profile || { skills: [], experiences: [] };
+    profileForm.elements.skills.value = (profile.skills || []).join(', ');
+    profileForm.elements.experience_evidence.value = (profile.experiences || []).map(item => [item.company, item.title, item.evidence].join(' | ')).join('\n');
+  }
 
   const query = $('#search-input').value.trim().toLowerCase();
   const selectedStatus = $('#status-filter').value;
@@ -133,9 +155,9 @@ function render() {
     return `
     <article class="app-row" data-application-id="${esc(app.id)}">
       <div class="company-cell">${companyMark(app.company, 'company-logo', index)}<div class="company-role"><strong>${heading}</strong><small>${companyLine}</small></div></div>
-      <div class="app-meta applied-meta"><span>${app.match_score === null || app.match_score === undefined ? (app.applied_date ? 'APPLIED' : 'ADDED') : `MATCH · ${app.match_score}%`}</span>${esc(prettyDate(app.applied_date || app.created_at?.slice(0, 10)))}</div>
+      <div class="app-meta applied-meta"><span>${app.match_analysis?.score !== null && app.match_analysis?.score !== undefined ? `FIT · ${app.match_analysis.score}%` : app.match_score !== null && app.match_score !== undefined ? `TERMS · ${app.match_score}%` : (app.applied_date ? 'APPLIED' : 'ADDED')}</span>${esc(prettyDate(app.applied_date || app.created_at?.slice(0, 10)))}</div>
       <div><span class="status-pill status-${esc(app.status)}">${esc(statusNames[app.status] || app.status)}</span></div>
-      <button class="row-menu" data-update="${esc(app.id)}" title="Update activity" aria-label="Update ${esc(app.company)} application">···</button>
+      <div class="row-actions"><button class="match-review" type="button" data-match="${esc(app.id)}">Review match</button><button class="row-menu" data-update="${esc(app.id)}" title="Update activity" aria-label="Update ${esc(app.company)} application">···</button></div>
     </article>`;
   }).join('');
   const hasApps = state.applications.length > 0;
@@ -210,6 +232,7 @@ function setupEvents() {
   ['add-job-top', 'add-job-inline', 'empty-add-job'].forEach(id => $(`#${id}`).addEventListener('click', () => openDialog('job-dialog')));
   ['add-company-top', 'add-company-inline', 'empty-add-company'].forEach(id => $(`#${id}`).addEventListener('click', () => openDialog('company-dialog')));
   $('#settings-button').addEventListener('click', () => openDialog('settings-dialog'));
+  $('#profile-button').addEventListener('click', () => openDialog('profile-dialog'));
   $('#threshold-button').addEventListener('click', () => openDialog('settings-dialog'));
   $('#model-button').addEventListener('click', () => openDialog('model-dialog'));
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
@@ -308,6 +331,36 @@ function setupEvents() {
     }
     catch (error) { notify(error.message, true); }
   });
+  $('#profile-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const experiences = form.elements.experience_evidence.value.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+      const parts = line.split('|').map(part => part.trim());
+      return parts.length >= 3 ? { company: parts[0], title: parts[1], evidence: parts.slice(2).join(' | ') } : { company: '', title: '', evidence: line };
+    });
+    const skills = form.elements.skills.value.split(/[,;\n]/).map(skill => skill.trim()).filter(Boolean);
+    try {
+      const result = await api('/api/profile', { skills, experiences });
+      state.candidate_profile = result.candidate_profile;
+      closeDialog('profile-dialog'); await refresh(); notify('Resume profile saved locally');
+    } catch (error) { notify(error.message, true); }
+  });
+  $('#tailor-button').addEventListener('click', async () => {
+    if (!matchApplicationId) return;
+    const button = $('#tailor-button'); button.disabled = true; button.textContent = 'Selecting evidence locally…';
+    try {
+      const result = await api('/api/tailoring', { application_id: matchApplicationId, model: currentModel });
+      $('#tailoring-evidence').innerHTML = (result.suggestions || []).map(item => `<li>${item.label ? `<small>${esc(item.label)}</small>` : '<small>Verified resume skill</small>'}<p>${esc(item.text)}</p></li>`).join('') || '<li class="match-empty">No profile evidence was selected. Add more detail to your resume profile.</li>';
+      $('#cover-note-draft').value = result.cover_note || '';
+      $('#tailoring-results').classList.remove('hidden');
+      button.textContent = 'Refresh local suggestions';
+      button.disabled = false;
+    } catch (error) { button.textContent = 'Suggest evidence to highlight with local AI'; button.disabled = false; notify(error.message, true); }
+  });
+  $('#copy-cover-note').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#cover-note-draft').value); notify('Draft copied. Review it before using.'); }
+    catch { notify('Could not access the clipboard', true); }
+  });
   $('#import-file').addEventListener('change', event => {
     $('#import-button').disabled = !event.currentTarget.files.length;
   });
@@ -387,6 +440,12 @@ function setupEvents() {
     } catch (error) { notify(error.message, true); }
   });
   $('#application-list').addEventListener('click', async event => {
+    const matchButton = event.target.closest('[data-match]');
+    if (matchButton) {
+      const app = state.applications.find(item => item.id === matchButton.dataset.match);
+      if (app) showMatchDialog(app);
+      return;
+    }
     const button = event.target.closest('[data-update]');
     if (!button) return;
     const app = state.applications.find(item => item.id === button.dataset.update);

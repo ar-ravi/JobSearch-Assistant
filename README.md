@@ -19,6 +19,13 @@ The tracker works without Ollama. AI chat is optional and sends prompts only to 
 - Applications, URLs, statuses, applied dates, and latest activity
 - Follow-up dates, next actions, and private notes
 - Stale applications with no recorded activity for 14 days (configurable in Settings)
+- Job descriptions, requirements, work mode, salary, source links, and capture dates
+
+## Resume matching
+
+The **Resume profile** editor keeps skills and experience evidence in the local tracker workbook. A starter profile can be loaded from the ignored `data/resume_profile.json` file; this file is local-only and is never included in Git. For each saved job, Orbit compares requirement keywords with that profile and shows the supported terms, evidence, gaps, and a deterministic keyword-coverage score. The score is an explainable review aid, not a prediction of hiring outcomes.
+
+Optional tailoring suggestions use the selected local Ollama model only to choose which existing profile evidence is relevant. Orbit displays those statements verbatim and builds an editable cover-note starter from them. Review all content before using it; Orbit does not send applications or modify a resume file.
 
 ## MCP tools
 

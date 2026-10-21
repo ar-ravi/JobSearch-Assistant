@@ -9,7 +9,7 @@ from pathlib import Path
 import storage
 
 
-class PhaseTwoStorageTests(unittest.TestCase):
+class TrackerStorageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_paths = (storage.DATA_DIR, storage.DATA_FILE, storage.TEMP_FILE, storage.LEGACY_DATA_FILE)
@@ -83,6 +83,22 @@ class PhaseTwoStorageTests(unittest.TestCase):
         self.assertEqual(app["job_description"], "")
         self.assertEqual(app["requirements"], "")
         self.assertEqual(app["captured_at"], "")
+
+    def test_resume_profile_match_explains_supported_and_missing_requirements(self) -> None:
+        profile = storage.save_candidate_profile({
+            "skills": ["Python", "Spring Boot"],
+            "experiences": [{"company": "Acme", "title": "Engineer", "evidence": "Built distributed systems using Java."}],
+        })
+        analysis = storage.analyze_job_match(
+            {"requirements": "Python\nKubernetes\nDistributed systems"}, profile
+        )
+        self.assertEqual(analysis["score"], 75)
+        self.assertEqual([item["requirement"] for item in analysis["matched"]], ["Python", "Distributed systems"])
+        self.assertEqual(analysis["gaps"][0]["requirement"], "Kubernetes")
+        self.assertIn("keyword coverage", analysis["explanation"])
+
+        no_requirements = storage.analyze_job_match({"requirements": ""}, profile)
+        self.assertIsNone(no_requirements["score"])
 
 
 if __name__ == "__main__":

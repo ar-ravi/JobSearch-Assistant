@@ -7,6 +7,7 @@ import csv
 import io
 import difflib
 import os
+import re
 import threading
 import uuid
 from datetime import date, datetime, timedelta
@@ -22,7 +23,7 @@ DATA_FILE = DATA_DIR / "job_tracker.xlsx"
 LEGACY_DATA_FILE = DATA_DIR / "job_tracker.json"
 TEMP_FILE = DATA_DIR / "job_tracker.tmp.xlsx"
 DEFAULTS: dict[str, Any] = {
-    "settings": {"stale_after_days": 14},
+    "settings": {"stale_after_days": 14, "saved_searches": "[]", "matching_preferences": "", "candidate_profile": ""},
     "companies": [],
     "applications": [],
     "activities": [],
@@ -35,6 +36,7 @@ APPLICATION_COLUMNS = (
 )
 ACTIVITY_COLUMNS = ("id", "application_id", "occurred_at", "type", "status", "note")
 ACTIVITY_TYPES = {"role_added", "status_change", "note", "recruiter_contact", "interview", "follow_up"}
+DEFAULT_PROFILE = {"skills": [], "experiences": []}
 _LOCK = threading.RLock()
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -111,6 +113,7 @@ def _read_workbook(path: Path | None = None) -> dict[str, Any]:
     settings.setdefault("stale_after_days", DEFAULTS["settings"]["stale_after_days"])
     settings.setdefault("saved_searches", "[]")
     settings.setdefault("matching_preferences", "")
+    settings.setdefault("candidate_profile", "")
     return {"settings": settings, "companies": companies, "applications": applications, "activities": activities}
 
 
@@ -339,6 +342,92 @@ def save_data(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _candidate_profile(settings: dict[str, Any]) -> dict[str, Any]:
+    stored = settings.get("candidate_profile", "")
+    try:
+        profile = json.loads(stored) if stored else None
+    except (TypeError, json.JSONDecodeError):
+        profile = None
+    if not isinstance(profile, dict):
+        profile = None
+    if profile is None:
+        try:
+            local_seed = json.loads((DATA_DIR / "resume_profile.json").read_text(encoding="utf-8"))
+            if isinstance(local_seed, dict):
+                profile = local_seed
+        except (OSError, json.JSONDecodeError):
+            profile = DEFAULT_PROFILE
+    return {"skills": profile.get("skills", []), "experiences": profile.get("experiences", [])}
+
+
+@_synchronized
+def save_candidate_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    skills = payload.get("skills", [])
+    experiences = payload.get("experiences", [])
+    if isinstance(skills, str):
+        skills = re.split(r"[,\n;]", skills)
+    if not isinstance(skills, list) or not isinstance(experiences, list):
+        raise ValueError("Profile skills and experience must be lists")
+    clean_skills = list(dict.fromkeys(str(skill).strip()[:100] for skill in skills if str(skill).strip()))[:100]
+    clean_experiences = []
+    for item in experiences[:50]:
+        if not isinstance(item, dict):
+            continue
+        company = str(item.get("company", "")).strip()[:100]
+        title = str(item.get("title", "")).strip()[:120]
+        evidence = str(item.get("evidence", "")).strip()[:1200]
+        if evidence:
+            clean_experiences.append({"company": company, "title": title, "evidence": evidence})
+    profile = {"skills": clean_skills, "experiences": clean_experiences}
+    data = load_data()
+    data["settings"]["candidate_profile"] = json.dumps(profile, ensure_ascii=False)
+    save_data(data)
+    return profile
+
+
+def analyze_job_match(application: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    requirements = [part.strip(" •\t-") for part in re.split(r"[\n;,]+", str(application.get("requirements", ""))) if part.strip(" •\t-")]
+    if not requirements:
+        return {"score": None, "matched": [], "gaps": [], "explanation": "Add or extract job requirements to compare this role with your profile."}
+    entries: list[tuple[str, str]] = []
+    for skill in profile.get("skills", []):
+        entries.append((str(skill), str(skill)))
+    for item in profile.get("experiences", []):
+        evidence = str(item.get("evidence", ""))
+        label = " · ".join(part for part in (item.get("company", ""), item.get("title", "")) if part)
+        if evidence:
+            entries.append((evidence, f"{label}: {evidence}" if label else evidence))
+    stop_words = {"and", "or", "the", "a", "an", "to", "of", "in", "for", "with", "on", "at", "by", "from", "is", "are", "be", "as", "you", "your", "years", "year", "experience", "strong", "working", "ability", "plus", "preferred", "required", "including"}
+    matched: list[dict[str, Any]] = []
+    gaps: list[dict[str, Any]] = []
+    total_terms = 0
+    covered_terms = 0
+    for requirement in requirements:
+        terms = [token for token in re.findall(r"[a-z0-9][a-z0-9+#.-]*", requirement.casefold()) if token not in stop_words and (len(token) > 1 or token in {"c"})]
+        terms = list(dict.fromkeys(terms))
+        if not terms:
+            continue
+        evidence_scores = []
+        for text, label in entries:
+            evidence_terms = set(re.findall(r"[a-z0-9][a-z0-9+#.-]*", text.casefold()))
+            overlap = [term for term in terms if term in evidence_terms]
+            evidence_scores.append((len(overlap), overlap, label))
+        best_count, supported, best_evidence = max(evidence_scores, default=(0, [], ""), key=lambda item: item[0])
+        ratio = best_count / len(terms)
+        total_terms += len(terms)
+        covered_terms += best_count
+        result = {"requirement": requirement, "coverage": round(ratio * 100), "supported_terms": supported}
+        if ratio >= 0.5:
+            result["evidence"] = best_evidence
+            matched.append(result)
+        else:
+            result["missing_terms"] = [term for term in terms if term not in supported]
+            gaps.append(result)
+    score = round(100 * covered_terms / total_terms) if total_terms else None
+    explanation = f"Deterministic keyword coverage: {covered_terms} of {total_terms} requirement keywords appear in your profile. A keyword match is a review aid, not a hiring prediction."
+    return {"score": score, "matched": matched, "gaps": gaps, "explanation": explanation}
+
+
 @_synchronized
 def dashboard() -> dict[str, Any]:
     data = load_data()
@@ -348,6 +437,7 @@ def dashboard() -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         saved_searches = []
     terms = [part.strip().casefold() for part in str(data["settings"].get("matching_preferences", "")).replace(",", "\n").splitlines() if part.strip()]
+    profile = _candidate_profile(data["settings"])
     activity_by_application: dict[str, list[dict[str, Any]]] = {}
     for activity in data.get("activities", []):
         activity_by_application.setdefault(activity.get("application_id", ""), []).append(activity)
@@ -355,6 +445,7 @@ def dashboard() -> dict[str, Any]:
         searchable = " ".join(str(app.get(key, "")) for key in ("role", "company", "location", "work_mode", "salary", "requirements", "job_description")).casefold()
         app["match_terms"] = [term for term in terms if term in searchable]
         app["match_score"] = round(100 * len(app["match_terms"]) / len(terms)) if terms else None
+        app["match_analysis"] = analyze_job_match(app, profile)
         app["activities"] = sorted(
             activity_by_application.get(app["id"], []),
             key=lambda activity: activity.get("occurred_at", ""),
@@ -376,6 +467,7 @@ def dashboard() -> dict[str, Any]:
         "followups": followups,
         "settings": data["settings"],
         "saved_searches": saved_searches,
+        "candidate_profile": profile,
     }
 
 
