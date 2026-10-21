@@ -13,6 +13,7 @@ let companyLogoPromise;
 const statusNames = { watching: 'Watching', saved: 'Saved', applied: 'Applied', screening: 'Screening', interview: 'Interview', offer: 'Offer', rejected: 'Not selected', withdrawn: 'Withdrawn' };
 const activityNames = { role_added: 'Role added', status_change: 'Status change', note: 'Note', recruiter_contact: 'Recruiter contact', interview: 'Interview', follow_up: 'Follow-up' };
 const terminal = new Set(['offer', 'rejected', 'withdrawn']);
+const pages = { overview: 'Overview', applications: 'Applications', companies: 'Company watchlist' };
 const initials = (value = '') => value.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 const safeWebsite = value => {
   try {
@@ -95,14 +96,29 @@ function setFilter(filter) {
   render();
 }
 
-function focusApplication(applicationId) {
+function showPage(page, updateHistory = true) {
+  if (!Object.hasOwn(pages, page)) page = 'overview';
+  document.body.dataset.page = page;
+  $('#page-title').textContent = pages[page];
+  $$('[data-page]').forEach(link => link.classList.toggle('active', link.dataset.page === page));
+  if (updateHistory && location.hash !== `#${page}`) history.pushState(null, '', `#${page}`);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function readRoute() {
+  const [page, query = ''] = location.hash.slice(1).split('?');
+  return { page: Object.hasOwn(pages, page) ? page : 'overview', applicationId: new URLSearchParams(query).get('application_id') };
+}
+
+function focusApplication(applicationId, updateHistory = true) {
   const app = state.applications.find(item => item.id === applicationId);
   if (!app) return;
-  focusedApplicationId = null;
+  showPage('applications', false);
+  if (updateHistory) history.pushState(null, '', `#applications?application_id=${encodeURIComponent(app.id)}`);
   $('#status-filter').value = 'all';
   $('#search-input').value = `${app.company} ${app.role}`;
-  setFilter('all');
   focusedApplicationId = app.id;
+  setFilter('all');
   $('#applications').scrollIntoView({ behavior: 'smooth', block: 'start' });
   requestAnimationFrame(() => {
     const row = $(`[data-application-id="${CSS.escape(applicationId)}"]`);
@@ -164,11 +180,21 @@ function render() {
   $('#empty-state').classList.toggle('hidden', shown.length > 0 || hasApps);
   if (hasApps && shown.length === 0) $('#application-list').innerHTML = '<div class="company-empty">No opportunities match this view. Try another filter or search.</div>';
 
-  $('#company-list').innerHTML = state.companies.map((company, index) => {
+  const companies = [...state.companies];
+  const knownCompanies = new Set(companies.map(company => company.name.toLowerCase()));
+  state.applications.forEach(app => {
+    const name = String(app.company || '').trim();
+    if (name && !knownCompanies.has(name.toLowerCase())) {
+      companies.push({ id: app.company_id || `derived-${name.toLowerCase()}`, name, website: '' });
+      knownCompanies.add(name.toLowerCase());
+    }
+  });
+  $('#company-list').innerHTML = companies.map((company, index) => {
     const count = state.applications.filter(app => app.company_id === company.id).length;
     const website = safeWebsite(company.website || '');
     return `<article class="company-chip"><button type="button" class="company-focus" data-company="${esc(company.name)}" aria-label="Show roles at ${esc(company.name)}">${companyMark(company.name, 'mini-logo', index)}<span class="company-chip-copy"><strong>${esc(company.name)}</strong><small>${count ? `${count} ${count === 1 ? 'role' : 'roles'} · View` : 'On your radar · View roles'}</small></span><span class="company-arrow">↗</span></button>${website ? `<a class="company-site" href="${esc(website)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(company.name)} career portal">Careers</a>` : '<span class="company-site-placeholder" aria-hidden="true"></span>'}</article>`;
   }).join('');
+  filterCompanies();
   $('#company-empty').classList.toggle('hidden', state.companies.length > 0);
   $('#company-suggestions').innerHTML = state.companies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
   $('#saved-search-list').innerHTML = (state.saved_searches || []).map(item => `<span class="saved-search-chip"><button type="button" data-run-search="${esc(item.id)}">${esc(item.query)}</button><button type="button" data-delete-search="${esc(item.id)}" aria-label="Remove saved search">×</button></span>`).join('');
@@ -183,6 +209,19 @@ function render() {
   }).join('');
   $('#followup-empty').classList.toggle('hidden', state.followups.length > 0);
   $('#followup-list').classList.toggle('hidden', state.followups.length === 0);
+}
+
+function filterCompanies() {
+  const query = ($('#company-search')?.value || '').trim().toLowerCase();
+  const chips = [...document.querySelectorAll('#company-list .company-chip')];
+  let visible = 0;
+  chips.forEach(chip => {
+    const matches = chip.textContent.toLowerCase().includes(query);
+    chip.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const count = $('#company-result-count');
+  if (count) count.textContent = query ? `${visible} of ${chips.length}` : `${chips.length} companies`;
 }
 
 async function refresh() {
@@ -205,11 +244,27 @@ function addChatMessage(text, role) {
   return node;
 }
 
-function showToolTrace(messageNode, tools) {
-  if (!tools?.length) return;
+function showToolTrace(messageNode, tools, references = []) {
+  if (!tools?.length && !references?.length) return;
   const trace = document.createElement('div');
   trace.className = 'tool-trace';
-  trace.textContent = `MCP checked: ${tools.map(tool => tool.label || tool.name).join(' · ')}`;
+  if (tools?.length) {
+    const summary = document.createElement('span');
+    summary.textContent = `MCP checked: ${tools.map(tool => tool.label || tool.name).join(' · ')}`;
+    trace.append(summary);
+  }
+  if (references?.length) {
+    const links = document.createElement('span');
+    links.className = 'copilot-references';
+    references.forEach(reference => {
+      const link = document.createElement('a');
+      link.href = reference.tracker_link;
+      link.dataset.openApplication = reference.id;
+      link.textContent = `${reference.role || 'Saved role'} · ${reference.company || 'Company'} ↗`;
+      links.append(link);
+    });
+    trace.append(links);
+  }
   messageNode.after(trace);
   $('#chat-history').scrollTop = $('#chat-history').scrollHeight;
 }
@@ -217,18 +272,44 @@ function showToolTrace(messageNode, tools) {
 async function askAssistant(message) {
   if (!message.trim()) return;
   addChatMessage(message, 'user');
-  const pending = addChatMessage('Thinking with your local tracker…', 'assistant');
   $('#chat-input').value = '';
+  const addCompanyMatch = message.trim().match(/^(?:please\s+)?(?:can you\s+)?(?:add|track)\s+(?:a\s+)?(?:company\s+(?:called\s+)?)?(.+?)(?:\s+to\s+(?:my\s+)?(?:company\s+)?watchlist)?[.!?]*$/i);
+  if (addCompanyMatch) {
+    const name = addCompanyMatch[1].trim().replace(/^called\s+/i, '').replace(/[.!?]+$/, '').trim();
+    if (!name || /^(?:to\s+)?(?:my\s+)?watchlist$/i.test(name)) {
+      addChatMessage('Tell me the company name, for example: “Add Acme to my watchlist.”', 'assistant');
+      return;
+    }
+    const existing = state.companies.find(company => company.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (existing) {
+      addChatMessage(`${existing.name} is already on your company watchlist.`, 'assistant');
+      return;
+    }
+    const pendingAdd = addChatMessage(`Adding ${name} to your local watchlist…`, 'assistant');
+    try {
+      const saved = await api('/api/companies', { name, website: '', roles_to_watch: [] });
+      await refresh();
+      pendingAdd.textContent = `Added ${saved.name} to your local company watchlist.`;
+    } catch (error) {
+      pendingAdd.textContent = error.message;
+    }
+    return;
+  }
+  const pending = addChatMessage('Thinking with your local tracker…', 'assistant');
   try {
     const result = await api('/api/chat', { message, model: currentModel });
     pending.textContent = result.reply || 'I could not create a response for that question.';
-    showToolTrace(pending, result.tools_used);
+    showToolTrace(pending, result.tools_used, result.references);
   } catch (error) {
     pending.textContent = error.message;
   }
 }
 
 function setupEvents() {
+  $$('[data-page]').forEach(link => link.addEventListener('click', event => {
+    event.preventDefault();
+    showPage(link.dataset.page);
+  }));
   ['add-job-top', 'add-job-inline', 'empty-add-job'].forEach(id => $(`#${id}`).addEventListener('click', () => openDialog('job-dialog')));
   ['add-company-top', 'add-company-inline', 'empty-add-company'].forEach(id => $(`#${id}`).addEventListener('click', () => openDialog('company-dialog')));
   $('#settings-button').addEventListener('click', () => openDialog('settings-dialog'));
@@ -247,6 +328,7 @@ function setupEvents() {
     $('#applications').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   $('#search-input').addEventListener('input', () => { focusedApplicationId = null; render(); });
+  $('#company-search').addEventListener('input', filterCompanies);
   $('#status-filter').addEventListener('change', () => { focusedApplicationId = null; render(); });
   $('#sort-applications').addEventListener('change', render);
   $('#save-search-button').addEventListener('click', async () => {
@@ -264,6 +346,7 @@ function setupEvents() {
   $('#company-list').addEventListener('click', event => {
     const button = event.target.closest('[data-company]');
     if (!button) return;
+    showPage('applications');
     focusedApplicationId = null;
     $('#status-filter').value = 'all';
     $('#search-input').value = button.dataset.company;
@@ -273,6 +356,17 @@ function setupEvents() {
   $('#followup-list').addEventListener('click', event => {
     const button = event.target.closest('[data-follow-up]');
     if (button) focusApplication(button.dataset.followUp);
+  });
+  $('#chat-history').addEventListener('click', event => {
+    const link = event.target.closest('[data-open-application]');
+    if (!link) return;
+    event.preventDefault();
+    focusApplication(link.dataset.openApplication);
+  });
+  window.addEventListener('popstate', () => {
+    const route = readRoute();
+    if (route.applicationId) focusApplication(route.applicationId, false);
+    else showPage(route.page, false);
   });
 
   $('#job-form').addEventListener('submit', async event => {
@@ -486,5 +580,7 @@ async function checkLocalModel() {
 
 $('#today-label').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 setupEvents();
-refresh();
+const initialRoute = readRoute();
+showPage(initialRoute.page, false);
+refresh().then(() => { if (initialRoute.applicationId) focusApplication(initialRoute.applicationId, false); });
 checkLocalModel();

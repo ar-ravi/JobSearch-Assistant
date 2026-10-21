@@ -432,6 +432,18 @@ def analyze_job_match(application: dict[str, Any], profile: dict[str, Any]) -> d
 def dashboard() -> dict[str, Any]:
     data = load_data()
     apps = data["applications"]
+    companies = list(data["companies"])
+    known_companies = {company["name"].casefold() for company in companies}
+    # Older/imported trackers can contain application rows without a matching
+    # Companies entry. Keep those employers visible in the watchlist view.
+    for application in apps:
+        name = str(application.get("company", "")).strip()
+        if not name or name.casefold() in known_companies:
+            continue
+        company_id = application.get("company_id") or f"derived-{uuid.uuid5(uuid.NAMESPACE_URL, name.casefold())}"
+        application["company_id"] = company_id
+        companies.append({"id": company_id, "name": name, "roles_to_watch": [], "website": "", "added_date": ""})
+        known_companies.add(name.casefold())
     try:
         saved_searches = json.loads(data["settings"].get("saved_searches", "[]"))
     except (TypeError, json.JSONDecodeError):
@@ -455,7 +467,7 @@ def dashboard() -> dict[str, Any]:
     followups = get_follow_up_applications()
     active = [a for a in apps if a.get("status") not in {"offer", "rejected", "withdrawn"}]
     return {
-        "companies": data["companies"],
+        "companies": companies,
         "applications": sorted(apps, key=lambda a: a.get("updated_at", ""), reverse=True),
         "stats": {
             "active": len(active),

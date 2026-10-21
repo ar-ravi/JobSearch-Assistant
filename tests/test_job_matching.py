@@ -84,6 +84,15 @@ class TrackerStorageTests(unittest.TestCase):
         self.assertEqual(app["requirements"], "")
         self.assertEqual(app["captured_at"], "")
 
+    def test_dashboard_derives_watchlist_company_for_orphaned_application(self) -> None:
+        storage.add_application({"company": "Northstar", "role": "Platform Engineer"})
+        data = storage.load_data()
+        data["companies"] = []
+        storage.save_data(data)
+
+        snapshot = storage.dashboard()
+        self.assertEqual([(company["name"], company["id"]) for company in snapshot["companies"]], [("Northstar", snapshot["applications"][0]["company_id"])])
+
     def test_resume_profile_match_explains_supported_and_missing_requirements(self) -> None:
         profile = storage.save_candidate_profile({
             "skills": ["Python", "Spring Boot"],

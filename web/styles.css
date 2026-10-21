@@ -6,6 +6,18 @@
 
 .stat-card{width:100%;text-align:left;color:inherit;font-family:inherit;cursor:pointer;transition:transform .16s,border-color .16s,box-shadow .16s}
 .stat-card:hover,.stat-card.is-active{transform:translateY(-1px);border-color:#c8dfcd;box-shadow:0 8px 24px rgba(35,46,38,.08)}
+
+/* The sidebar opens focused workspace views while Overview keeps the full dashboard. */
+body[data-page="applications"] .welcome-row,
+body[data-page="applications"] .stats-grid,
+body[data-page="applications"] #companies,
+body[data-page="applications"] .right-column,
+body[data-page="companies"] .welcome-row,
+body[data-page="companies"] .stats-grid,
+body[data-page="companies"] #applications,
+body[data-page="companies"] .right-column{display:none}
+body[data-page="applications"] .dashboard-grid{grid-template-columns:minmax(0,1fr)}
+body[data-page="companies"] .dashboard-grid{display:block}
 .stat-card:focus-visible,.company-focus:focus-visible,.company-site:focus-visible,.followup-item:focus-visible{outline:2px solid #75a982;outline-offset:2px}
 .stat-top,.stat-value,.stat-foot{display:flex}.stat-value{display:block}
 .company-chip{display:grid;grid-template-columns:1fr auto;gap:3px 8px;padding:0;overflow:hidden}

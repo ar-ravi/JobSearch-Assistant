@@ -1,38 +1,42 @@
-# Local Job Search Assistant
+# JobSearch Assistant
 
-A private, local-first job application tracker with an Ollama agent connected to read-only MCP tools. Your tracker lives on your machine in `data/job_tracker.xlsx` and is excluded from Git.
+A private, local-first workspace to organize your job search, track opportunities, and decide what to do next.
+
+## Features
+
+- **Opportunity tracker** — Manage roles, statuses, job details, notes, and application history.
+- **Company watchlist** — Search saved companies or add one by name; keep career pages and roles of interest together.
+- **Follow-up reminders** — Surface upcoming check-ins and applications that have gone quiet.
+- **Resume matching** — Compare role requirements with your saved skills and experience; review matched evidence and gaps.
+- **Local AI copilot** — Ask questions about your tracker, extract job details, and get resume evidence suggestions with Ollama.
+- **MCP integration** — Let compatible AI clients search applications, review history, find follow-ups, and compare resume matches using read-only tools.
+- **Backups** — Export or restore the full tracker as Excel, or import and export applications as CSV.
+
+## Screenshots
+
+![Overview with the local AI copilot and company discovery](docs/screenshots/overview.png)
+
+| Applications | Company watchlist |
+|---|---|
+| ![Applications tracker](docs/screenshots/applications.png) | ![Searchable company watchlist](docs/screenshots/company-watchlist.png) |
 
 ## Run locally
 
-1. Install Python 3.11 or newer.
-2. Create and activate a virtual environment.
-3. Install dependencies: `pip install -r requirements.txt`
-4. (Optional, for AI chat) Install [Ollama](https://ollama.com), start it, and pull a model such as `ollama pull qwen3:4b`.
-5. Start the app: `python app.py`
-6. Open <http://127.0.0.1:8765>.
+Requires Python 3.11 or newer.
 
-The tracker works without Ollama. AI chat is optional and sends prompts only to the Ollama service configured on your own computer. No account or cloud API key is required.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
 
-## What it tracks
+Open <http://127.0.0.1:8765>. To enable AI features, install [Ollama](https://ollama.com), start it, and download a model, for example `ollama pull qwen3:4b`.
 
-- Companies you want to follow, their career portal links, and roles you are interested in
-- Applications, URLs, statuses, applied dates, and latest activity
-- Follow-up dates, next actions, and private notes
-- Stale applications with no recorded activity for 14 days (configurable in Settings)
-- Job descriptions, requirements, work mode, salary, source links, and capture dates
+## Local data and privacy
 
-## Resume matching
+The app listens on `127.0.0.1`. Tracker data is stored in `data/job_tracker.xlsx`, which is excluded from Git. AI requests go to the Ollama service on your computer. If you choose **Read job page**, the app requests the URL you provide; the captured listing is saved locally.
 
-The **Resume profile** editor keeps skills and experience evidence in the local tracker workbook. A starter profile can be loaded from the ignored `data/resume_profile.json` file; this file is local-only and is never included in Git. For each saved job, Orbit compares requirement keywords with that profile and shows the supported terms, evidence, gaps, and a deterministic keyword-coverage score. The score is an explainable review aid, not a prediction of hiring outcomes.
+## MCP server
 
-Optional tailoring suggestions use the selected local Ollama model only to choose which existing profile evidence is relevant. Orbit displays those statements verbatim and builds an editable cover-note starter from them. Review all content before using it; Orbit does not send applications or modify a resume file.
-
-## MCP tools
-
-Run `python mcp_server.py` to expose tracker reads as MCP tools over stdio. The in-app copilot discovers those tools, passes them to Ollama for tool selection, executes the selected read-only MCP calls, and shows which tools it used. The model cannot save or modify tracker data through MCP. Changes remain explicit actions in the dashboard.
-
-## Local data and backups
-
-The Excel workbook is created automatically on first run. If `data/job_tracker.json` exists from an older version, the app imports its records into the workbook the first time it starts; the JSON file is left in place as a backup. You can edit `data/job_tracker.xlsx` while the app is stopped, or back it up by copying that file. Do not commit it: local tracker files are ignored by Git.
-
-The workbook has `Applications`, `Companies`, `Settings`, and `Activity` sheets. The `Companies` sheet's `website` column stores each company's careers portal URL, which appears as a **Careers** link in the watchlist. Each role's timeline is stored in `Activity`; the app creates dated entries for new roles and status changes, and lets you log recruiter contacts, interviews, follow-ups, and notes. Older workbooks without this sheet are upgraded the next time the app saves data. In **Settings**, download an Excel backup or import a tracker workbook; importing replaces the current tracker after confirmation. Keep the header rows intact. Close the workbook in Excel before changing tracker data in the app so there is no conflict between unsaved spreadsheet edits and app updates.
+Run `python mcp_server.py` from the project directory to expose read-only tracker tools over stdio. The tools search applications, retrieve role details and activity, find follow-ups, list companies, and compare resume matches. Tracker changes are made in the app.

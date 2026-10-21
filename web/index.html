@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7f4">
   <title>Local Job Search Assistant</title>
-  <link rel="stylesheet" href="/styles.css?v=9">
-  <link rel="stylesheet" href="/agent.css?v=3">
+  <link rel="stylesheet" href="/styles.css?v=10">
+  <link rel="stylesheet" href="/agent.css?v=4">
+  <link rel="stylesheet" href="/minimal.css?v=11">
 </head>
 <body>
   <div class="app-shell">
@@ -17,9 +18,9 @@
       </a>
       <div class="workspace-label">PERSONAL WORKSPACE</div>
       <nav class="nav-list" aria-label="Main navigation">
-        <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span>Overview</a>
-        <a class="nav-item" href="#applications"><span class="nav-icon">▤</span>Applications <span id="nav-count" class="nav-count">0</span></a>
-        <a class="nav-item" href="#companies"><span class="nav-icon">◉</span>Company watchlist</a>
+        <a class="nav-item active" data-page="overview" href="#overview"><span class="nav-icon">▦</span>Overview</a>
+        <a class="nav-item" data-page="applications" href="#applications"><span class="nav-icon">▤</span>Applications <span id="nav-count" class="nav-count">0</span></a>
+        <a class="nav-item" data-page="companies" href="#companies"><span class="nav-icon">◉</span>Company watchlist</a>
         <button class="nav-item nav-button" type="button" id="profile-button"><span class="nav-icon">▧</span>Resume profile</button>
       </nav>
       <div class="sidebar-divider"></div>
@@ -33,9 +34,9 @@
     </aside>
 
     <main class="main-content" id="overview">
-      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>Overview</strong></div><div class="topbar-actions"><span class="today-label" id="today-label"></span><button id="add-job-top" class="button primary small"><span>＋</span> Add opportunity</button></div></header>
+      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="page-title">Overview</strong></div><div class="topbar-actions"><span class="today-label" id="today-label"></span><button id="add-job-top" class="button primary small"><span>＋</span> Add opportunity</button></div></header>
       <div class="content-wrap">
-        <section class="welcome-row"><div><div class="eyebrow"><span class="sparkle">✳</span> YOUR CAREER, IN MOTION</div><h1>Good things take <em>follow-through.</em></h1><p class="welcome-subtitle">Keep every opportunity moving, one thoughtful next step at a time.</p></div><div class="welcome-actions"><button id="add-company-top" class="button secondary"><span>＋</span> Track a company</button></div></section>
+        <section class="welcome-row"><div><div class="eyebrow"><span class="sparkle">✳</span> YOUR CAREER, IN MOTION</div><h1>Find your next <em>good fit.</em></h1><p class="welcome-subtitle">Search your saved companies and keep your next steps close.</p></div><div class="welcome-actions"><button id="add-company-top" class="button secondary"><span>＋</span> Track a company</button></div></section>
 
         <section class="stats-grid" aria-label="Application summary">
           <button class="stat-card" type="button" data-filter-card="active" aria-label="Show active opportunities"><span class="stat-top"><span>Active opportunities</span><span class="stat-icon icon-lilac">↗</span></span><span class="stat-value" id="stat-active">0</span><span class="stat-foot">Roles in progress · View</span></button>
@@ -52,7 +53,7 @@
               <div class="application-list" id="application-list"></div>
               <div class="empty-state hidden" id="empty-state"><div class="empty-art"><span>✳</span><span>↗</span><span>◉</span></div><h3>Your next chapter starts here</h3><p>Add a company to watch or save a role you’re interested in. Your assistant will help keep every next step in view.</p><div class="empty-actions"><button id="empty-add-company" class="button secondary">Track a company</button><button id="empty-add-job" class="button primary">Add an opportunity</button></div></div>
             </section>
-            <section class="panel companies-panel" id="companies"><div class="panel-heading"><div><div class="section-kicker">ON YOUR RADAR</div><h2>Company watchlist</h2></div><button id="add-company-inline" class="text-action">＋ Add company</button></div><div id="company-list" class="company-list"></div><div id="company-empty" class="company-empty">No companies tracked yet. Add a few you’d love to work with.</div></section>
+            <section class="panel companies-panel" id="companies"><div class="panel-heading"><div><div class="section-kicker">ON YOUR RADAR</div><h2>Companies to explore</h2></div><button id="add-company-inline" class="text-action">＋ Add company</button></div><div class="company-tools"><label class="search-box"><span>⌕</span><input id="company-search" type="search" placeholder="Search companies" aria-label="Search tracked companies"></label><span id="company-result-count" class="result-count"></span></div><div id="company-list" class="company-list"></div><div id="company-empty" class="company-empty">No companies tracked yet. Add a few you’d love to work with.</div></section>
           </div>
 
           <aside class="right-column">
@@ -66,8 +67,8 @@
 
             <section class="assistant-panel" id="assistant">
               <div class="assistant-head"><span class="assistant-avatar">✳</span><div><div class="assistant-title">Your career copilot</div><div class="assistant-subtitle"><span class="online-dot"></span><span id="assistant-status">Local AI • private by design</span></div></div><button id="model-button" class="more-button" title="Choose model">···</button></div>
-              <div class="assistant-message"><span class="message-sparkle">✳</span><p>Hi Ravi! I can help you stay organized and think through your next move. What’s on your mind?</p></div>
-              <div class="suggestion-chips"><button class="suggestion-chip" data-prompt="Which applications should I follow up on?"><span>↗</span> Who should I follow up with?</button><button class="suggestion-chip" data-prompt="Summarize my job search progress."><span>◷</span> How is my search going?</button></div>
+              <div class="assistant-message"><span class="message-sparkle">✳</span><p>Ask about roles and next steps, or say “Add Acme” to save a company to your local watchlist.</p></div>
+              <div class="suggestion-chips"><button class="suggestion-chip" data-prompt="Which applications should I follow up on, including upcoming reminders?"><span>↗</span> Follow-ups & reminders</button><button class="suggestion-chip" data-prompt="Compare my saved roles by resume keyword coverage. Show strengths and gaps."><span>◷</span> Compare resume matches</button></div>
               <div class="chat-history" id="chat-history" aria-live="polite"></div>
               <form id="chat-form" class="chat-composer"><input id="chat-input" type="text" placeholder="Ask your local assistant…" aria-label="Message your local assistant"><button aria-label="Send message" type="submit">↑</button></form>
               <div class="assistant-foot"><span>⌑</span> Powered by your local model <span class="foot-separator">·</span> Nothing leaves your device</div>
@@ -99,6 +100,6 @@
     <div class="modal-actions"><button type="button" class="button secondary" data-close="activity-dialog">Close</button><button class="button primary" type="submit">Save opportunity</button></div>
   </form></dialog>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=10"></script>
 </body>
 </html>
