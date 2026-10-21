@@ -112,7 +112,7 @@ function render() {
   const sortBy = $('#sort-applications').value;
   const shown = state.applications
     .filter(app => {
-      const searchable = [app.company, app.role, app.status, statusNames[app.status], app.location, app.url, app.source, app.applied_date, app.follow_up_date, app.next_action, app.notes, ...(app.activities || []).map(activity => activity.note)].join(' ').toLowerCase();
+      const searchable = [app.company, app.role, app.status, statusNames[app.status], app.location, app.url, app.source, app.work_mode, app.salary, app.requirements, app.job_description, app.applied_date, app.follow_up_date, app.next_action, app.notes, ...(app.activities || []).map(activity => activity.note)].join(' ').toLowerCase();
       return matchesFilter(app) && (!focusedApplicationId || app.id === focusedApplicationId) && (selectedStatus === 'all' || app.status === selectedStatus) && searchable.includes(query);
     })
     .sort((a, b) => {
@@ -133,7 +133,7 @@ function render() {
     return `
     <article class="app-row" data-application-id="${esc(app.id)}">
       <div class="company-cell">${companyMark(app.company, 'company-logo', index)}<div class="company-role"><strong>${heading}</strong><small>${companyLine}</small></div></div>
-      <div class="app-meta applied-meta"><span>${app.applied_date ? 'APPLIED' : 'ADDED'}</span>${esc(prettyDate(app.applied_date || app.created_at?.slice(0, 10)))}</div>
+      <div class="app-meta applied-meta"><span>${app.match_score === null || app.match_score === undefined ? (app.applied_date ? 'APPLIED' : 'ADDED') : `MATCH · ${app.match_score}%`}</span>${esc(prettyDate(app.applied_date || app.created_at?.slice(0, 10)))}</div>
       <div><span class="status-pill status-${esc(app.status)}">${esc(statusNames[app.status] || app.status)}</span></div>
       <button class="row-menu" data-update="${esc(app.id)}" title="Update activity" aria-label="Update ${esc(app.company)} application">···</button>
     </article>`;
@@ -149,6 +149,8 @@ function render() {
   }).join('');
   $('#company-empty').classList.toggle('hidden', state.companies.length > 0);
   $('#company-suggestions').innerHTML = state.companies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
+  $('#saved-search-list').innerHTML = (state.saved_searches || []).map(item => `<span class="saved-search-chip"><button type="button" data-run-search="${esc(item.id)}">${esc(item.query)}</button><button type="button" data-delete-search="${esc(item.id)}" aria-label="Remove saved search">×</button></span>`).join('');
+  $('#settings-form [name="matching_preferences"]').value = state.settings.matching_preferences || '';
 
   $('#followup-list').innerHTML = state.followups.slice(0, 4).map(app => {
     const timing = app.reminder_type === 'scheduled'
@@ -224,6 +226,18 @@ function setupEvents() {
   $('#search-input').addEventListener('input', () => { focusedApplicationId = null; render(); });
   $('#status-filter').addEventListener('change', () => { focusedApplicationId = null; render(); });
   $('#sort-applications').addEventListener('change', render);
+  $('#save-search-button').addEventListener('click', async () => {
+    const query = $('#search-input').value.trim();
+    if (!query) return notify('Type a search to save it', true);
+    try { await api('/api/saved-searches', { query }); await refresh(); notify('Search saved locally'); }
+    catch (error) { notify(error.message, true); }
+  });
+  $('#saved-search-list').addEventListener('click', async event => {
+    const run = event.target.closest('[data-run-search]');
+    const remove = event.target.closest('[data-delete-search]');
+    if (run) { $('#search-input').value = (state.saved_searches || []).find(item => item.id === run.dataset.runSearch)?.query || ''; render(); }
+    if (remove) { try { await api(`/api/saved-searches/${encodeURIComponent(remove.dataset.deleteSearch)}`, {}); await refresh(); } catch (error) { notify(error.message, true); } }
+  });
   $('#company-list').addEventListener('click', event => {
     const button = event.target.closest('[data-company]');
     if (!button) return;
@@ -241,8 +255,42 @@ function setupEvents() {
   $('#job-form').addEventListener('submit', async event => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
-    try { await api('/api/applications', values); event.currentTarget.reset(); closeDialog('job-dialog'); await refresh(); notify('Opportunity saved to your local tracker'); }
+    try {
+      const duplicate = await api('/api/duplicates', values);
+      if (duplicate.matches.length && !confirm(`This looks like a saved opportunity: ${duplicate.matches.map(item => `${item.role} at ${item.company}`).join(', ')}. Save anyway?`)) return;
+      values.allow_duplicate = duplicate.matches.length > 0;
+      await api('/api/applications', values); event.currentTarget.reset(); $('#capture-status').textContent = 'Only reads the link you provide.'; closeDialog('job-dialog'); await refresh(); notify('Opportunity saved to your local tracker');
+    }
     catch (error) { notify(error.message, true); }
+  });
+  $('#capture-link-button').addEventListener('click', async () => {
+    const form = $('#job-form');
+    const url = form.elements.url.value.trim();
+    const description = $('#job-description-input').value.trim();
+    const button = $('#capture-link-button'); button.disabled = true; button.textContent = 'Reading…';
+    try {
+      const result = await api('/api/capture-job', { url, description });
+      $('#job-description-input').value = result.description;
+      form.elements.captured_at.value = result.captured_at;
+      form.elements.source.value = url ? 'Captured from job link' : 'Pasted job description';
+      $('#capture-status').textContent = `Captured locally · ${new Date(result.captured_at).toLocaleString()}`;
+      notify('Job details captured on this device');
+    } catch (error) { notify(error.message, true); }
+    finally { button.disabled = false; button.textContent = 'Read job page'; }
+  });
+  $('#extract-job-button').addEventListener('click', async () => {
+    const description = $('#job-description-input').value.trim();
+    if (!description) return notify('Paste a description or read a job page first', true);
+    const button = $('#extract-job-button'); button.disabled = true; button.textContent = 'Extracting locally…';
+    try {
+      const result = await api('/api/extract-job', { description, model: currentModel });
+      const form = $('#job-form');
+      for (const field of ['company', 'role', 'location', 'work_mode', 'salary', 'requirements']) if (!form.elements[field].value.trim()) form.elements[field].value = result[field] || '';
+      if (!form.elements.source.value) form.elements.source.value = 'Pasted job description';
+      if (!form.elements.captured_at.value) form.elements.captured_at.value = new Date().toISOString().slice(0, 19);
+      notify('Review the extracted fields, then save');
+    } catch (error) { notify(error.message, true); }
+    finally { button.disabled = false; button.textContent = 'Fill details with local AI'; }
   });
   $('#company-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -252,7 +300,12 @@ function setupEvents() {
   });
   $('#settings-form').addEventListener('submit', async event => {
     event.preventDefault();
-    try { await api('/api/settings', { stale_after_days: Number(new FormData(event.currentTarget).get('stale_after_days')) }); closeDialog('settings-dialog'); await refresh(); notify('Reminder setting saved'); }
+    try {
+      const form = new FormData(event.currentTarget);
+      await api('/api/settings', { stale_after_days: Number(form.get('stale_after_days')) });
+      await api('/api/preferences', { matching_preferences: form.get('matching_preferences') });
+      closeDialog('settings-dialog'); await refresh(); notify('Preferences saved locally');
+    }
     catch (error) { notify(error.message, true); }
   });
   $('#import-file').addEventListener('change', event => {

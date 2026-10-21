@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import csv
 import io
+import difflib
 import os
 import threading
 import uuid
@@ -30,7 +31,7 @@ STATUSES = {"watching", "saved", "applied", "screening", "interview", "offer", "
 COMPANY_COLUMNS = ("id", "name", "roles_to_watch", "website", "added_date")
 APPLICATION_COLUMNS = (
     "id", "company_id", "company", "role", "url", "location", "source", "status",
-    "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "created_at", "updated_at",
+    "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "job_description", "work_mode", "salary", "requirements", "captured_at", "created_at", "updated_at",
 )
 ACTIVITY_COLUMNS = ("id", "application_id", "occurred_at", "type", "status", "note")
 ACTIVITY_TYPES = {"role_added", "status_change", "note", "recruiter_contact", "interview", "follow_up"}
@@ -63,18 +64,20 @@ def _read_sheet(sheet: Any, columns: tuple[str, ...]) -> list[dict[str, Any]]:
         return []
     headers = [_text(cell.value).strip() for cell in sheet[1]]
     positions = {header: index for index, header in enumerate(headers) if header}
-    missing = [column for column in columns if column not in positions]
+    optional = set(APPLICATION_COLUMNS) - {"id", "company_id", "company", "role", "url", "location", "source", "status", "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "created_at", "updated_at"}
+    missing = [column for column in columns if column not in positions and column not in optional]
     if missing:
         raise ValueError(f"The {sheet.title} sheet is missing columns: {', '.join(missing)}")
     rows: list[dict[str, Any]] = []
     for values in sheet.iter_rows(min_row=2, values_only=True):
-        row = {column: values[positions[column]] if positions[column] < len(values) else None for column in columns}
+        row = {column: values[positions[column]] if column in positions and positions[column] < len(values) else None for column in columns}
         if any(value is not None for value in row.values()):
             rows.append(row)
     return rows
 
 
-def _read_workbook(path: Path = DATA_FILE) -> dict[str, Any]:
+def _read_workbook(path: Path | None = None) -> dict[str, Any]:
+    path = path or DATA_FILE
     try:
         workbook = load_workbook(path, read_only=True, data_only=True)
         required = {"Applications", "Companies", "Settings"}
@@ -106,6 +109,8 @@ def _read_workbook(path: Path = DATA_FILE) -> dict[str, Any]:
         for key in ACTIVITY_COLUMNS:
             activity[key] = _text(activity.get(key))
     settings.setdefault("stale_after_days", DEFAULTS["settings"]["stale_after_days"])
+    settings.setdefault("saved_searches", "[]")
+    settings.setdefault("matching_preferences", "")
     return {"settings": settings, "companies": companies, "applications": applications, "activities": activities}
 
 
@@ -202,6 +207,8 @@ def import_applications_csv(contents: bytes) -> dict[str, int]:
             "url": url, "location": row.get("location", ""), "source": row.get("source", ""), "status": status,
             "applied_date": row.get("applied_date", ""), "last_activity_date": row.get("last_activity_date", "") or _today(),
             "follow_up_date": row.get("follow_up_date", ""), "next_action": row.get("next_action", ""), "notes": row.get("notes", ""),
+            "job_description": row.get("job_description", ""), "work_mode": row.get("work_mode", ""), "salary": row.get("salary", ""),
+            "requirements": row.get("requirements", ""), "captured_at": row.get("captured_at", ""),
             "created_at": row.get("created_at", "") or now, "updated_at": now,
         }
         data["applications"].append(application)
@@ -336,10 +343,18 @@ def save_data(data: dict[str, Any]) -> dict[str, Any]:
 def dashboard() -> dict[str, Any]:
     data = load_data()
     apps = data["applications"]
+    try:
+        saved_searches = json.loads(data["settings"].get("saved_searches", "[]"))
+    except (TypeError, json.JSONDecodeError):
+        saved_searches = []
+    terms = [part.strip().casefold() for part in str(data["settings"].get("matching_preferences", "")).replace(",", "\n").splitlines() if part.strip()]
     activity_by_application: dict[str, list[dict[str, Any]]] = {}
     for activity in data.get("activities", []):
         activity_by_application.setdefault(activity.get("application_id", ""), []).append(activity)
     for app in apps:
+        searchable = " ".join(str(app.get(key, "")) for key in ("role", "company", "location", "work_mode", "salary", "requirements", "job_description")).casefold()
+        app["match_terms"] = [term for term in terms if term in searchable]
+        app["match_score"] = round(100 * len(app["match_terms"]) / len(terms)) if terms else None
         app["activities"] = sorted(
             activity_by_application.get(app["id"], []),
             key=lambda activity: activity.get("occurred_at", ""),
@@ -360,6 +375,7 @@ def dashboard() -> dict[str, Any]:
         "stale": stale,
         "followups": followups,
         "settings": data["settings"],
+        "saved_searches": saved_searches,
     }
 
 
@@ -388,6 +404,9 @@ def add_application(payload: dict[str, Any]) -> dict[str, Any]:
     if status not in STATUSES:
         raise ValueError(f"Status must be one of: {', '.join(sorted(STATUSES))}")
     data = load_data()
+    matches = find_duplicates(payload, data["applications"])
+    if matches and not payload.get("allow_duplicate"):
+        raise ValueError("A similar opportunity is already saved. Review the duplicate warning and choose Save anyway if this is a different listing.")
     company = next((c for c in data["companies"] if c["name"].casefold() == company_name.casefold()), None)
     if not company:
         company = add_company(company_name)
@@ -401,12 +420,71 @@ def add_application(payload: dict[str, Any]) -> dict[str, Any]:
         "last_activity_date": str(payload.get("last_activity_date", today)),
         "follow_up_date": str(payload.get("follow_up_date", "")),
         "next_action": str(payload.get("next_action", "")).strip(), "notes": str(payload.get("notes", "")).strip(),
+        "job_description": str(payload.get("job_description", "")).strip(), "work_mode": str(payload.get("work_mode", "")).strip(),
+        "salary": str(payload.get("salary", "")).strip(), "requirements": str(payload.get("requirements", "")).strip(),
+        "captured_at": str(payload.get("captured_at", "")).strip(),
         "created_at": datetime.now().isoformat(timespec="seconds"), "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     data["applications"].append(application)
     _record_activity(data, application, "role_added", f"Added to pipeline with status: {status_names_for_log(status)}.")
     save_data(data)
     return application
+
+
+def find_duplicates(payload: dict[str, Any], applications: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Find likely duplicates by canonical URL or close company and role names."""
+    if applications is None:
+        applications = load_data()["applications"]
+    company = str(payload.get("company", "")).strip().casefold()
+    role = str(payload.get("role", "")).strip().casefold()
+    url = str(payload.get("url", "")).strip().rstrip("/").casefold()
+    matches = []
+    for item in applications:
+        old_url = str(item.get("url", "")).strip().rstrip("/").casefold()
+        company_ratio = difflib.SequenceMatcher(None, company, str(item.get("company", "")).casefold()).ratio() if company else 0
+        role_ratio = difflib.SequenceMatcher(None, role, str(item.get("role", "")).casefold()).ratio() if role else 0
+        same_listing = bool(url and old_url == url)
+        similar_title = company_ratio >= 0.88 and role_ratio >= 0.84
+        if same_listing or similar_title:
+            matches.append({"id": item.get("id"), "company": item.get("company"), "role": item.get("role"), "status": item.get("status"), "url": item.get("url")})
+    return matches[:5]
+
+
+@_synchronized
+def save_search(query: str) -> list[dict[str, str]]:
+    query = query.strip()
+    if not query:
+        raise ValueError("Enter a search before saving it")
+    data = load_data()
+    try:
+        searches = json.loads(data["settings"].get("saved_searches", "[]"))
+    except (TypeError, json.JSONDecodeError):
+        searches = []
+    if not any(item.get("query", "").casefold() == query.casefold() for item in searches):
+        searches.insert(0, {"id": str(uuid.uuid4()), "query": query})
+    data["settings"]["saved_searches"] = json.dumps(searches[:20], ensure_ascii=False)
+    save_data(data)
+    return searches[:20]
+
+
+@_synchronized
+def delete_search(search_id: str) -> list[dict[str, str]]:
+    data = load_data()
+    try:
+        searches = json.loads(data["settings"].get("saved_searches", "[]"))
+    except (TypeError, json.JSONDecodeError):
+        searches = []
+    searches = [item for item in searches if item.get("id") != search_id]
+    data["settings"]["saved_searches"] = json.dumps(searches, ensure_ascii=False)
+    save_data(data)
+    return searches
+
+
+@_synchronized
+def set_matching_preferences(preferences: str) -> dict[str, Any]:
+    data = load_data()
+    data["settings"]["matching_preferences"] = preferences.strip()[:2000]
+    return save_data(data)["settings"]
 
 
 @_synchronized
@@ -416,7 +494,7 @@ def update_application(application_id: str, changes: dict[str, Any]) -> dict[str
     if not app:
         raise ValueError("Application not found")
     previous_status = app.get("status", "")
-    allowed = {"status", "url", "location", "source", "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "role"}
+    allowed = {"status", "url", "location", "source", "applied_date", "last_activity_date", "follow_up_date", "next_action", "notes", "role", "job_description", "work_mode", "salary", "requirements"}
     for key, value in changes.items():
         if key in allowed:
             if key == "status" and value not in STATUSES:
